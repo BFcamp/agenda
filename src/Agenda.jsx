@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
-import { Inbox, CalendarDays, Sun, Plus, Trash2, Check, X, Pencil, ChevronLeft, ChevronRight, Loader2, AlertCircle, LogOut } from "lucide-react";
+import { Inbox, CalendarDays, Sun, Plus, Trash2, Check, X, Pencil, ChevronLeft, ChevronRight, Loader2, AlertCircle, LogOut, FolderKanban, GripVertical, CalendarPlus } from "lucide-react";
 import { supabase } from "./supabase";
 
 // ---------- helpers de fecha (sin librerías) ----------
@@ -33,6 +33,7 @@ const rowToCal = (r) => ({ id: r.id, nombre: r.nombre, color: r.color });
 const rowToTarea = (r) => ({
   id: r.id, titulo: r.titulo, descripcion: r.descripcion,
   calendarioId: r.calendario_id,
+  proyectoId: r.proyecto_id,
   start: r.inicio ? new Date(r.inicio) : null,
   end: r.fin ? new Date(r.fin) : null,
   completada: r.completada,
@@ -41,14 +42,22 @@ const tareaToRow = (t) => ({
   titulo: t.titulo,
   descripcion: t.descripcion ?? null,
   calendario_id: t.calendarioId ?? null,
+  proyecto_id: t.proyectoId ?? null,
   inicio: t.start ? new Date(t.start).toISOString() : null,
   fin: t.end ? new Date(t.end).toISOString() : null,
   completada: !!t.completada,
 });
 
+const rowToProyecto = (r) => ({ id: r.id, nombre: r.nombre, color: r.color });
+
+const rowToPaso = (r) => ({ id: r.id, proyectoId: r.proyecto_id, titulo: r.titulo, hecho: r.hecho, orden: r.orden, tareaId: r.tarea_id });
+const pasoToRow = (p) => ({ proyecto_id: p.proyectoId, titulo: p.titulo, hecho: !!p.hecho, orden: p.orden, tarea_id: p.tareaId ?? null });
+
 function useAgenda() {
   const [calendarios, setCalendarios] = useState([]);
   const [tareas, setTareas] = useState([]);
+  const [proyectos, setProyectos] = useState([]);
+  const [pasos, setPasos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -56,15 +65,21 @@ function useAgenda() {
     let activo = true;
     (async () => {
       try {
-        const [c, t] = await Promise.all([
+        const [c, t, p, s] = await Promise.all([
           supabase.from("calendarios").select("*").order("created_at"),
           supabase.from("tareas").select("*").order("created_at"),
+          supabase.from("proyectos").select("*").order("created_at"),
+          supabase.from("pasos").select("*").order("orden"),
         ]);
         if (c.error) throw c.error;
         if (t.error) throw t.error;
+        if (p.error) throw p.error;
+        if (s.error) throw s.error;
         if (!activo) return;
         setCalendarios(c.data.map(rowToCal));
         setTareas(t.data.map(rowToTarea));
+        setProyectos(p.data.map(rowToProyecto));
+        setPasos(s.data.map(rowToPaso));
       } catch (e) {
         if (activo) setError(e.message || "No se pudieron cargar los datos");
       } finally {
@@ -117,7 +132,96 @@ function useAgenda() {
     if (error) setError(error.message);
   }, []);
 
-  return { calendarios, tareas, loading, error, setError, upsertTarea, deleteTarea, upsertCalendario, deleteCalendario };
+  // ---------- proyectos ----------
+  const upsertProyecto = useCallback(async (pr) => {
+    if (pr.id) {
+      setProyectos((p) => p.map((x) => (x.id === pr.id ? pr : x)));
+      const { error } = await supabase.from("proyectos").update({ nombre: pr.nombre, color: pr.color }).eq("id", pr.id);
+      if (error) setError(error.message);
+    } else {
+      const tempId = uid();
+      setProyectos((p) => [...p, { ...pr, id: tempId }]);
+      const { data, error } = await supabase.from("proyectos").insert({ nombre: pr.nombre, color: pr.color }).select().single();
+      if (error) { setProyectos((p) => p.filter((x) => x.id !== tempId)); setError(error.message); return; }
+      setProyectos((p) => p.map((x) => (x.id === tempId ? rowToProyecto(data) : x)));
+    }
+  }, []);
+
+  const deleteProyecto = useCallback(async (id) => {
+    setProyectos((p) => p.filter((x) => x.id !== id));
+    setPasos((p) => p.filter((x) => x.proyectoId !== id)); // cascade en la base
+    setTareas((p) => p.map((x) => (x.proyectoId === id ? { ...x, proyectoId: null } : x))); // set null en la base
+    const { error } = await supabase.from("proyectos").delete().eq("id", id);
+    if (error) setError(error.message);
+  }, []);
+
+  // ---------- pasos ----------
+  const crearPaso = useCallback(async (proyectoId, titulo, ordenSiguiente) => {
+    const tempId = uid();
+    const nuevo = { id: tempId, proyectoId, titulo, hecho: false, orden: ordenSiguiente, tareaId: null };
+    setPasos((p) => [...p, nuevo]);
+    const { data, error } = await supabase.from("pasos").insert(pasoToRow(nuevo)).select().single();
+    if (error) { setPasos((p) => p.filter((x) => x.id !== tempId)); setError(error.message); return; }
+    setPasos((p) => p.map((x) => (x.id === tempId ? rowToPaso(data) : x)));
+  }, []);
+
+  const actualizarPaso = useCallback(async (s) => {
+    setPasos((p) => p.map((x) => (x.id === s.id ? s : x)));
+    const { error } = await supabase.from("pasos").update(pasoToRow(s)).eq("id", s.id);
+    if (error) setError(error.message);
+  }, []);
+
+  const eliminarPaso = useCallback(async (s) => {
+    setPasos((p) => p.filter((x) => x.id !== s.id));
+    if (s.tareaId) {
+      setTareas((p) => p.filter((x) => x.id !== s.tareaId));
+      await supabase.from("tareas").delete().eq("id", s.tareaId);
+    }
+    const { error } = await supabase.from("pasos").delete().eq("id", s.id);
+    if (error) setError(error.message);
+  }, []);
+
+  const reordenarPasos = useCallback(async (proyectoId, pasosOrdenados) => {
+    const conOrden = pasosOrdenados.map((s, i) => ({ ...s, orden: i }));
+    setPasos((p) => [...p.filter((x) => x.proyectoId !== proyectoId), ...conOrden]);
+    await Promise.all(conOrden.map((s) => supabase.from("pasos").update({ orden: s.orden }).eq("id", s.id)));
+  }, []);
+
+  // crea (o reprograma) la tarea real ligada a un paso, y la deja en Semana
+  const agendarPaso = useCallback(async (paso, proyectoId, fecha, hora) => {
+    const [h, m] = hora.split(":").map(Number);
+    const start = new Date(fecha); start.setHours(h, m, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60000);
+
+    if (paso.tareaId) {
+      setTareas((p) => p.map((x) => (x.id === paso.tareaId ? { ...x, start, end } : x)));
+      const { error } = await supabase.from("tareas").update({ inicio: start.toISOString(), fin: end.toISOString() }).eq("id", paso.tareaId);
+      if (error) setError(error.message);
+      return;
+    }
+    const filaTarea = tareaToRow({ titulo: paso.titulo, calendarioId: null, proyectoId, start, end, completada: false });
+    const { data, error } = await supabase.from("tareas").insert(filaTarea).select().single();
+    if (error) { setError(error.message); return; }
+    const nuevaTarea = rowToTarea(data);
+    setTareas((p) => [...p, nuevaTarea]);
+    const pasoActualizado = { ...paso, tareaId: nuevaTarea.id };
+    setPasos((p) => p.map((x) => (x.id === paso.id ? pasoActualizado : x)));
+    await supabase.from("pasos").update({ tarea_id: nuevaTarea.id }).eq("id", paso.id);
+  }, []);
+
+  const desagendarPaso = useCallback(async (paso) => {
+    if (!paso.tareaId) return;
+    setTareas((p) => p.filter((x) => x.id !== paso.tareaId));
+    setPasos((p) => p.map((x) => (x.id === paso.id ? { ...x, tareaId: null } : x)));
+    await supabase.from("tareas").delete().eq("id", paso.tareaId);
+    await supabase.from("pasos").update({ tarea_id: null }).eq("id", paso.id);
+  }, []);
+
+  return {
+    calendarios, tareas, proyectos, pasos, loading, error, setError,
+    upsertTarea, deleteTarea, upsertCalendario, deleteCalendario,
+    upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso,
+  };
 }
 
 // ============================================================
@@ -194,10 +298,15 @@ function Auth() {
 function AgendaApp({ onSignOut }) {
   const hoy = startOfDay(new Date());
   const [vista, setVista] = useState("semana");
-  const { calendarios, tareas, loading, error, setError, upsertTarea, deleteTarea, upsertCalendario, deleteCalendario } = useAgenda();
+  const {
+    calendarios, tareas, proyectos, pasos, loading, error, setError,
+    upsertTarea, deleteTarea, upsertCalendario, deleteCalendario,
+    upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso,
+  } = useAgenda();
 
   const calById = useMemo(() => Object.fromEntries(calendarios.map((c) => [c.id, c])), [calendarios]);
-  const colorDe = (t) => calById[t.calendarioId]?.color || "#94A3B8";
+  const proyById = useMemo(() => Object.fromEntries(proyectos.map((p) => [p.id, p])), [proyectos]);
+  const colorDe = (t) => calById[t.calendarioId]?.color || proyById[t.proyectoId]?.color || "#94A3B8";
 
   return (
     <div style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}
@@ -216,9 +325,12 @@ function AgendaApp({ onSignOut }) {
           </div>
         ) : (
           <>
-            {vista === "bandeja" && <Bandeja {...{ tareas, calendarios, upsertCalendario, deleteCalendario, colorDe, upsert: upsertTarea, borrar: deleteTarea }} />}
-            {vista === "hoy" && <Hoy {...{ tareas, calById, calendarios, colorDe, hoy, upsert: upsertTarea, borrar: deleteTarea }} />}
-            {vista === "semana" && <Semana {...{ tareas, calById, calendarios, colorDe, upsert: upsertTarea, borrar: deleteTarea, hoy }} />}
+            {vista === "bandeja" && <Bandeja {...{ tareas, calendarios, proyectos, upsertCalendario, deleteCalendario, colorDe, upsert: upsertTarea, borrar: deleteTarea }} />}
+            {vista === "hoy" && <Hoy {...{ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert: upsertTarea, borrar: deleteTarea }} />}
+            {vista === "semana" && <Semana {...{ tareas, calById, calendarios, proyectos, colorDe, upsert: upsertTarea, borrar: deleteTarea, hoy }} />}
+            {vista === "proyectos" && (
+              <Proyectos {...{ proyectos, pasos, upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso, hoy }} />
+            )}
           </>
         )}
       </div>
@@ -228,7 +340,7 @@ function AgendaApp({ onSignOut }) {
 }
 
 function Header({ vista, onSignOut }) {
-  const titulos = { bandeja: "Bandeja de entrada", hoy: "Hoy", semana: "Semana" };
+  const titulos = { bandeja: "Bandeja de entrada", hoy: "Hoy", semana: "Semana", proyectos: "Proyectos" };
   return (
     <div className="px-4 pt-4 pb-3 bg-white border-b border-[#E6E8EC] flex items-end justify-between">
       <div>
@@ -249,6 +361,7 @@ function Tabs({ vista, setVista }) {
     { id: "bandeja", label: "Bandeja", icon: Inbox },
     { id: "hoy", label: "Hoy", icon: Sun },
     { id: "semana", label: "Semana", icon: CalendarDays },
+    { id: "proyectos", label: "Proyectos", icon: FolderKanban },
   ];
   return (
     <nav className="flex bg-white border-t border-[#E6E8EC] pb-1">
@@ -268,7 +381,7 @@ function Tabs({ vista, setVista }) {
 }
 
 // ============================ BANDEJA ============================
-function Bandeja({ tareas, calendarios, upsertCalendario, deleteCalendario, colorDe, upsert, borrar }) {
+function Bandeja({ tareas, calendarios, proyectos, upsertCalendario, deleteCalendario, colorDe, upsert, borrar }) {
   const [texto, setTexto] = useState("");
   const [calSel, setCalSel] = useState(calendarios[0]?.id || null);
   const [gestion, setGestion] = useState(false);
@@ -330,7 +443,7 @@ function Bandeja({ tareas, calendarios, upsertCalendario, deleteCalendario, colo
           onClose={() => setGestion(false)}
         />
       )}
-      {editar && <EditorTarea {...{ editar, setEditar, calendarios, upsert, onDelete: borrar }} />}
+      {editar && <EditorTarea {...{ editar, setEditar, calendarios, proyectos, upsert, onDelete: borrar }} />}
     </div>
   );
 }
@@ -406,7 +519,7 @@ function GestionCalendarios({ calendarios, onSave, onDelete, onClose }) {
 }
 
 // ============================ HOY ============================
-function Hoy({ tareas, calById, calendarios, colorDe, hoy, upsert, borrar }) {
+function Hoy({ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert, borrar }) {
   const delDia = tareas.filter((t) => t.start && sameDay(t.start, hoy)).sort((a, b) => a.start - b.start);
   const [editar, setEditar] = useState(null);
   const toggle = (t) => upsert({ ...t, completada: !t.completada });
@@ -429,13 +542,13 @@ function Hoy({ tareas, calById, calendarios, colorDe, hoy, upsert, borrar }) {
           </div>
         ))}
       </div>
-      {editar && <EditorTarea {...{ editar, setEditar, calendarios, upsert, onDelete: borrar }} />}
+      {editar && <EditorTarea {...{ editar, setEditar, calendarios, proyectos, upsert, onDelete: borrar }} />}
     </div>
   );
 }
 
 // ============================ SEMANA (grilla con drag) ============================
-function Semana({ tareas, calById, calendarios, colorDe, upsert, borrar, hoy }) {
+function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borrar, hoy }) {
   const [numDias, setNumDias] = useState(7);
   const [ancla, setAncla] = useState(startOfWeek(new Date()));
   const dias = useMemo(() => Array.from({ length: numDias }, (_, i) => addDays(ancla, i)), [ancla, numDias]);
@@ -687,14 +800,15 @@ function Semana({ tareas, calById, calendarios, colorDe, upsert, borrar, hoy }) 
         </div>
       )}
 
-      {editar && <EditorTarea {...{ editar, setEditar, calendarios, upsert, onDelete: borrar }} />}
+      {editar && <EditorTarea {...{ editar, setEditar, calendarios, proyectos, upsert, onDelete: borrar }} />}
     </div>
   );
 }
 
-function EditorTarea({ editar, setEditar, calendarios, upsert, onDelete }) {
+function EditorTarea({ editar, setEditar, calendarios, proyectos, upsert, onDelete }) {
   const [t, setT] = useState(editar);
   const programada = !!t.start;
+  const proyecto = proyectos?.find((p) => p.id === t.proyectoId);
   const setHora = (campo, valor) => {
     const [h, m] = valor.split(":").map(Number);
     const d = new Date(t[campo]); d.setHours(h, m, 0, 0); setT({ ...t, [campo]: d });
@@ -713,6 +827,11 @@ function EditorTarea({ editar, setEditar, calendarios, upsert, onDelete }) {
         </div>
         <input autoFocus value={t.titulo} onChange={(e) => setT({ ...t, titulo: e.target.value })} placeholder="Título"
           className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2.5 outline-none text-[16px]" />
+        {proyecto && (
+          <div className="flex items-center gap-1.5 mt-2 text-[12px]" style={{ color: proyecto.color }}>
+            <FolderKanban size={13} /> Paso de «{proyecto.nombre}» · se edita desde Proyectos
+          </div>
+        )}
         {programada ? (
           <div className="flex gap-3 mt-3">
             <label className="flex-1 text-[12px] text-[#6B7280]">Desde
@@ -739,6 +858,260 @@ function EditorTarea({ editar, setEditar, calendarios, upsert, onDelete }) {
             <button onClick={eliminar} className="px-4 flex items-center justify-center gap-1.5 border border-[#FECACA] text-[#DC2626] rounded-lg py-2.5 text-[15px] font-medium">
               <Trash2 size={17} /> Eliminar
             </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================ PROYECTOS ============================
+function Proyectos({ proyectos, pasos, upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso, hoy }) {
+  const [abierto, setAbierto] = useState(null);
+  const proyecto = proyectos.find((p) => p.id === abierto);
+
+  if (proyecto) {
+    const pasosDelProyecto = pasos.filter((s) => s.proyectoId === proyecto.id).sort((a, b) => a.orden - b.orden);
+    return (
+      <DetalleProyecto
+        proyecto={proyecto}
+        pasos={pasosDelProyecto}
+        onVolver={() => setAbierto(null)}
+        {...{ crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso, hoy }}
+      />
+    );
+  }
+  return <ListaProyectos {...{ proyectos, pasos, upsertProyecto, deleteProyecto }} onAbrir={setAbierto} />;
+}
+
+function ListaProyectos({ proyectos, pasos, upsertProyecto, deleteProyecto, onAbrir }) {
+  const [nuevo, setNuevo] = useState(false);
+  const [editId, setEditId] = useState(null); // id del proyecto en edición inline
+  const [nombre, setNombre] = useState("");
+  const [color, setColor] = useState(PALETA[0]);
+
+  const abrirCrear = () => { setNuevo(true); setEditId(null); setNombre(""); setColor(PALETA[0]); };
+  const abrirEditar = (p) => { setEditId(p.id); setNuevo(false); setNombre(p.nombre); setColor(p.color); };
+  const cerrar = () => { setNuevo(false); setEditId(null); };
+  const guardar = () => {
+    if (!nombre.trim()) return;
+    upsertProyecto(editId ? { id: editId, nombre: nombre.trim(), color } : { nombre: nombre.trim(), color });
+    cerrar();
+  };
+
+  return (
+    <div className="h-full overflow-y-auto px-4 py-3">
+      {proyectos.length === 0 && !nuevo && (
+        <p className="text-[14px] text-[#9AA1AC] py-10 text-center">Sin proyectos todavía. Creá uno para empezar a desglosarlo en pasos.</p>
+      )}
+      <div className="space-y-3">
+        {proyectos.map((p) => {
+          const propios = pasos.filter((s) => s.proyectoId === p.id);
+          const hechos = propios.filter((s) => s.hecho).length;
+          const pct = propios.length ? Math.round((hechos / propios.length) * 100) : 0;
+          const enEdicion = editId === p.id;
+          return (
+            <div key={p.id} className="bg-white rounded-2xl border border-[#E6E8EC] shadow-sm overflow-hidden">
+              <div className="flex items-center">
+                <button onClick={() => onAbrir(p.id)} className="flex-1 text-left p-4 active:bg-[#FAFAFB] transition">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-3 h-3 rounded-full shrink-0" style={{ background: p.color }} />
+                    <span className="flex-1 text-[16px] font-semibold">{p.nombre}</span>
+                    <span className="text-[12px] text-[#9AA1AC]">{hechos}/{propios.length}</span>
+                  </div>
+                  <div className="mt-3 h-1.5 rounded-full bg-[#EDEFF2] overflow-hidden">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: p.color }} />
+                  </div>
+                </button>
+                <button onClick={() => (enEdicion ? cerrar() : abrirEditar(p))} className="p-3 text-[#9AA1AC] hover:text-[#1B2430]"><Pencil size={16} /></button>
+                <button onClick={() => deleteProyecto(p.id)} className="p-3 pr-4 text-[#9AA1AC] hover:text-[#DC2626]"><Trash2 size={16} /></button>
+              </div>
+              {enEdicion && (
+                <div className="px-4 pb-4 pt-1 border-t border-[#E6E8EC] bg-[#FAFAFB]">
+                  <input autoFocus value={nombre} onChange={(e) => setNombre(e.target.value)}
+                    className="w-full bg-white rounded-lg px-3 py-2 outline-none text-[15px] border border-[#E6E8EC] mt-3" />
+                  <div className="flex gap-2 mt-3 flex-wrap">
+                    {PALETA.map((c) => (
+                      <button key={c} onClick={() => setColor(c)} className="w-7 h-7 rounded-full"
+                        style={{ background: c, outline: color === c ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2 text-[14px] font-medium">Guardar</button>
+                    <button onClick={cerrar} className="px-4 bg-white border border-[#E6E8EC] rounded-lg py-2 text-[14px]">Cancelar</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {nuevo ? (
+          <div className="bg-white rounded-2xl border border-[#E6E8EC] p-4">
+            <input autoFocus value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && guardar()}
+              placeholder="Nombre del proyecto" className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 outline-none text-[15px]" />
+            <div className="flex gap-2 mt-3 flex-wrap">
+              {PALETA.map((c) => (
+                <button key={c} onClick={() => setColor(c)} className="w-7 h-7 rounded-full"
+                  style={{ background: c, outline: color === c ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
+              ))}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2 text-[15px] font-medium">Crear</button>
+              <button onClick={cerrar} className="px-4 bg-white border border-[#E6E8EC] rounded-lg py-2 text-[15px]">Cancelar</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={abrirCrear}
+            className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-[#D7DBE1] rounded-2xl py-3.5 text-[#6B7280] text-[14px] font-medium">
+            <Plus size={18} /> Nuevo proyecto
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DetalleProyecto({ proyecto, pasos, onVolver, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso, hoy }) {
+  const [texto, setTexto] = useState("");
+  const [agendar, setAgendar] = useState(null);
+  const [pasosLocal, setPasosLocal] = useState(pasos);
+  const [dragId, setDragId] = useState(null);
+  const rowRefs = useRef({});
+
+  // resincroniza con la base salvo mientras se está arrastrando
+  useEffect(() => { if (!dragId) setPasosLocal(pasos); }, [pasos, dragId]);
+
+  const agregar = () => {
+    if (!texto.trim()) return;
+    crearPaso(proyecto.id, texto.trim(), pasosLocal.length);
+    setTexto("");
+  };
+
+  const onHandleDown = (e, id) => { e.currentTarget.setPointerCapture(e.pointerId); setDragId(id); };
+  const onHandleMove = (e) => {
+    if (!dragId) return;
+    const y = e.clientY;
+    const ids = pasosLocal.map((p) => p.id);
+    let target = ids.indexOf(dragId);
+    for (let i = 0; i < ids.length; i++) {
+      const el = rowRefs.current[ids[i]];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (y >= r.top && y <= r.bottom) { target = i; break; }
+    }
+    const cur = ids.indexOf(dragId);
+    if (target !== cur && target >= 0) {
+      const next = [...pasosLocal];
+      const [m] = next.splice(cur, 1);
+      next.splice(target, 0, m);
+      setPasosLocal(next);
+    }
+  };
+  const onHandleUp = () => {
+    if (dragId) reordenarPasos(proyecto.id, pasosLocal);
+    setDragId(null);
+  };
+
+  const hechos = pasosLocal.filter((s) => s.hecho).length;
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="px-3 pt-3 pb-3 bg-white border-b border-[#E6E8EC]">
+        <button onClick={onVolver} className="flex items-center gap-1 text-[14px] text-[#6B7280] mb-2"><ChevronLeft size={18} /> Proyectos</button>
+        <div className="flex items-center gap-2.5 px-1">
+          <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ background: proyecto.color }} />
+          <h1 className="text-xl font-semibold tracking-tight flex-1">{proyecto.nombre}</h1>
+          <span className="text-[12px] text-[#9AA1AC]">{hechos}/{pasosLocal.length}</span>
+        </div>
+      </div>
+
+      <div className="p-3 space-y-2">
+        {pasosLocal.length === 0 && <p className="text-[14px] text-[#9AA1AC] py-6 text-center">Sin pasos todavía. Agregá el primero abajo.</p>}
+        {pasosLocal.map((s) => {
+          const arrastrando = dragId === s.id;
+          return (
+            <div key={s.id} ref={(el) => (rowRefs.current[s.id] = el)}
+              className="flex items-center gap-2 bg-white rounded-xl border px-2 py-2.5 transition"
+              style={{ borderColor: arrastrando ? proyecto.color : "#E6E8EC", boxShadow: arrastrando ? "0 8px 20px rgba(0,0,0,0.12)" : "none", opacity: arrastrando ? 0.95 : 1 }}>
+              <button onPointerDown={(e) => onHandleDown(e, s.id)} onPointerMove={onHandleMove} onPointerUp={onHandleUp}
+                className="text-[#C4C9D1] touch-none cursor-grab active:cursor-grabbing px-0.5" style={{ touchAction: "none" }}>
+                <GripVertical size={18} />
+              </button>
+              <button onClick={() => actualizarPaso({ ...s, hecho: !s.hecho })} className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0"
+                style={{ borderColor: proyecto.color, background: s.hecho ? proyecto.color : "transparent" }}>
+                {s.hecho && <Check size={13} className="text-white" strokeWidth={3} />}
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className={"text-[15px] truncate " + (s.hecho ? "line-through text-[#9AA1AC]" : "")}>{s.titulo}</p>
+                {s.tareaId && <p className="text-[11px] mt-0.5" style={{ color: proyecto.color }}>Programado · ver en Semana</p>}
+              </div>
+              <button onClick={() => setAgendar(s)} className="shrink-0 p-1.5 rounded-lg" title="Agendar"
+                style={{ color: s.tareaId ? proyecto.color : "#9AA1AC", background: s.tareaId ? proyecto.color + "14" : "transparent" }}>
+                <CalendarPlus size={18} />
+              </button>
+              <button onClick={() => eliminarPaso(s)} className="shrink-0 p-1.5 text-[#C4C9D1] hover:text-[#DC2626]"><Trash2 size={15} /></button>
+            </div>
+          );
+        })}
+
+        <div className="flex items-center gap-2 bg-white rounded-xl border border-[#E6E8EC] px-3 py-2 mt-1">
+          <Plus size={18} className="text-[#9AA1AC]" />
+          <input value={texto} onChange={(e) => setTexto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && agregar()}
+            placeholder="Agregar paso…" className="flex-1 bg-transparent outline-none text-[15px] placeholder:text-[#B6BCC6]" />
+        </div>
+      </div>
+
+      {agendar && (
+        <ModalAgendar paso={agendar} color={proyecto.color} hoy={hoy}
+          onGuardar={(fecha, hora) => { agendarPaso(agendar, proyecto.id, fecha, hora); setAgendar(null); }}
+          onQuitar={() => { desagendarPaso(agendar); setAgendar(null); }}
+          onClose={() => setAgendar(null)} />
+      )}
+    </div>
+  );
+}
+
+function ModalAgendar({ paso, color, hoy, onGuardar, onQuitar, onClose }) {
+  const [fecha, setFecha] = useState(hoy);
+  const [hora, setHora] = useState("09:00");
+  const dias = Array.from({ length: 7 }, (_, i) => addDays(hoy, i));
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative w-full max-w-md bg-white rounded-t-3xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold">Agendar paso</h2>
+          <button onClick={onClose}><X size={22} className="text-[#9AA1AC]" /></button>
+        </div>
+        <p className="text-[14px] text-[#6B7280] mb-4">{paso.titulo}</p>
+
+        <p className="text-[12px] text-[#6B7280] mb-1.5">Día</p>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {dias.map((d, i) => {
+            const on = sameDay(d, fecha);
+            return (
+              <button key={i} onClick={() => setFecha(d)}
+                className="shrink-0 px-3 py-2 rounded-xl text-center border transition"
+                style={{ borderColor: on ? color : "#E6E8EC", background: on ? color + "14" : "transparent" }}>
+                <span className="block text-[10px] uppercase text-[#9AA1AC]">{DIA_CORTO[d.getDay()]}</span>
+                <span className="block text-[15px] font-semibold" style={{ color: on ? color : "#1B2430" }}>{d.getDate()}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <p className="text-[12px] text-[#6B7280] mt-4 mb-1.5">Hora</p>
+        <input type="time" value={hora} onChange={(e) => setHora(e.target.value)}
+          className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2.5 outline-none text-[15px]" />
+
+        <div className="flex gap-2 mt-5">
+          <button onClick={() => onGuardar(fecha, hora)} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2.5 text-[15px] font-medium">
+            {paso.tareaId ? "Reprogramar" : "Agendar"}
+          </button>
+          {paso.tareaId && (
+            <button onClick={onQuitar} className="px-4 border border-[#E6E8EC] text-[#6B7280] rounded-lg py-2.5 text-[15px]">Quitar</button>
           )}
         </div>
       </div>
