@@ -367,11 +367,27 @@ function GestionCalendarios({ calendarios, onSave, onDelete, onClose }) {
           <div className="mt-4 p-3 rounded-xl bg-[#F4F5F7]">
             <input autoFocus value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })}
               placeholder="Nombre del calendario" className="w-full bg-white rounded-lg px-3 py-2 outline-none text-[15px] border border-[#E6E8EC]" />
-            <div className="flex gap-2 mt-3 flex-wrap">
+            <div className="flex gap-2 mt-3 flex-wrap items-center">
               {PALETA.map((col) => (
                 <button key={col} onClick={() => setEdit({ ...edit, color: col })}
                   className="w-7 h-7 rounded-full transition" style={{ background: col, outline: edit.color === col ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
               ))}
+              {/* color personalizado: abre el selector del sistema */}
+              <label className="w-7 h-7 rounded-full cursor-pointer relative overflow-hidden" title="Color personalizado"
+                style={{ background: "conic-gradient(red, yellow, lime, aqua, blue, magenta, red)",
+                  outline: !PALETA.includes(edit.color) && /^#[0-9a-fA-F]{6}$/.test(edit.color) ? "2px solid #1B2430" : "none", outlineOffset: 2 }}>
+                <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(edit.color) ? edit.color : "#000000"}
+                  onChange={(e) => setEdit({ ...edit, color: e.target.value })}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+              </label>
+            </div>
+            {/* hexadecimal manual */}
+            <div className="flex items-center gap-2 mt-2">
+              <span className="w-6 h-6 rounded-full border border-[#E6E8EC] shrink-0" style={{ background: /^#[0-9a-fA-F]{6}$/.test(edit.color) ? edit.color : "transparent" }} />
+              <input value={edit.color}
+                onChange={(e) => { let v = e.target.value.trim(); if (v && !v.startsWith("#")) v = "#" + v; setEdit({ ...edit, color: v }); }}
+                placeholder="#2563EB" maxLength={7}
+                className="flex-1 bg-white rounded-lg px-3 py-1.5 outline-none text-[14px] border border-[#E6E8EC] font-mono uppercase" />
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2 text-[15px] font-medium">Guardar</button>
