@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
-import { Inbox, CalendarDays, Sun, Plus, Trash2, Check, X, Pencil, ChevronLeft, ChevronRight, Loader2, AlertCircle, LogOut, FolderKanban, GripVertical, CalendarPlus } from "lucide-react";
+import { Inbox, CalendarDays, Sun, Plus, Trash2, Check, X, Pencil, ChevronLeft, ChevronRight, ChevronUp, Loader2, AlertCircle, LogOut, FolderKanban, GripVertical, CalendarPlus } from "lucide-react";
 import { supabase } from "./supabase";
 
 // ---------- helpers de fecha (sin librerías) ----------
@@ -19,9 +19,38 @@ const HORA_INI = 0;
 const HORA_FIN = 24;
 const PX_HORA = 52;
 const SNAP_MIN = 15;
+const TAP_MOVE_PX = 18; // si el dedo se mueve más que esto, se prioriza el scroll y no se crea tarea
 const snap = (min) => Math.round(min / SNAP_MIN) * SNAP_MIN;
 
 const PALETA = ["#2563EB", "#059669", "#DB2777", "#D97706", "#7C3AED", "#0891B2", "#DC2626", "#65A30D"];
+
+// Selector de color reutilizable: paleta fija + rueda del sistema + hexadecimal manual
+function SelectorColor({ color, onChange }) {
+  const esHexValido = /^#[0-9a-fA-F]{6}$/.test(color);
+  return (
+    <>
+      <div className="flex gap-2 mt-3 flex-wrap items-center">
+        {PALETA.map((col) => (
+          <button key={col} onClick={() => onChange(col)}
+            className="w-7 h-7 rounded-full transition" style={{ background: col, outline: color === col ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
+        ))}
+        <label className="w-7 h-7 rounded-full cursor-pointer relative overflow-hidden" title="Color personalizado"
+          style={{ background: "conic-gradient(red, yellow, lime, aqua, blue, magenta, red)",
+            outline: !PALETA.includes(color) && esHexValido ? "2px solid #1B2430" : "none", outlineOffset: 2 }}>
+          <input type="color" value={esHexValido ? color : "#000000"} onChange={(e) => onChange(e.target.value)}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+        </label>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <span className="w-6 h-6 rounded-full border border-[#E6E8EC] shrink-0" style={{ background: esHexValido ? color : "transparent" }} />
+        <input value={color}
+          onChange={(e) => { let v = e.target.value.trim(); if (v && !v.startsWith("#")) v = "#" + v; onChange(v); }}
+          placeholder="#2563EB" maxLength={7}
+          className="flex-1 bg-white rounded-lg px-3 py-1.5 outline-none text-[14px] border border-[#E6E8EC] font-mono uppercase" />
+      </div>
+    </>
+  );
+}
 
 let _id = 100;
 const uid = () => `tmp-${Date.now()}-${_id++}`;
@@ -480,28 +509,7 @@ function GestionCalendarios({ calendarios, onSave, onDelete, onClose }) {
           <div className="mt-4 p-3 rounded-xl bg-[#F4F5F7]">
             <input autoFocus value={edit.nombre} onChange={(e) => setEdit({ ...edit, nombre: e.target.value })}
               placeholder="Nombre del calendario" className="w-full bg-white rounded-lg px-3 py-2 outline-none text-[15px] border border-[#E6E8EC]" />
-            <div className="flex gap-2 mt-3 flex-wrap items-center">
-              {PALETA.map((col) => (
-                <button key={col} onClick={() => setEdit({ ...edit, color: col })}
-                  className="w-7 h-7 rounded-full transition" style={{ background: col, outline: edit.color === col ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
-              ))}
-              {/* color personalizado: abre el selector del sistema */}
-              <label className="w-7 h-7 rounded-full cursor-pointer relative overflow-hidden" title="Color personalizado"
-                style={{ background: "conic-gradient(red, yellow, lime, aqua, blue, magenta, red)",
-                  outline: !PALETA.includes(edit.color) && /^#[0-9a-fA-F]{6}$/.test(edit.color) ? "2px solid #1B2430" : "none", outlineOffset: 2 }}>
-                <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(edit.color) ? edit.color : "#000000"}
-                  onChange={(e) => setEdit({ ...edit, color: e.target.value })}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-              </label>
-            </div>
-            {/* hexadecimal manual */}
-            <div className="flex items-center gap-2 mt-2">
-              <span className="w-6 h-6 rounded-full border border-[#E6E8EC] shrink-0" style={{ background: /^#[0-9a-fA-F]{6}$/.test(edit.color) ? edit.color : "transparent" }} />
-              <input value={edit.color}
-                onChange={(e) => { let v = e.target.value.trim(); if (v && !v.startsWith("#")) v = "#" + v; setEdit({ ...edit, color: v }); }}
-                placeholder="#2563EB" maxLength={7}
-                className="flex-1 bg-white rounded-lg px-3 py-1.5 outline-none text-[14px] border border-[#E6E8EC] font-mono uppercase" />
-            </div>
+            <SelectorColor color={edit.color} onChange={(c) => setEdit({ ...edit, color: c })} />
             <div className="flex gap-2 mt-4">
               <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2 text-[15px] font-medium">Guardar</button>
               <button onClick={() => setEdit(null)} className="px-4 bg-white border border-[#E6E8EC] rounded-lg py-2 text-[15px]">Cancelar</button>
@@ -557,7 +565,9 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
   const altoGrilla = (HORA_FIN - HORA_INI) * PX_HORA;
 
   const gridRef = useRef(null);
+  const tapRef = useRef(null); // tap pendiente sobre la grilla vacía (se resuelve como tap o se cancela como scroll)
   const [drag, setDrag] = useState(null);
+  const [draftDrag, setDraftDrag] = useState(null); // arrastre de las manijas del rectángulo de tarea nueva
   const [editar, setEditar] = useState(null);
   const [nowMin, setNowMin] = useState(() => new Date().getHours() * 60 + new Date().getMinutes());
   useEffect(() => { const i = setInterval(() => { const n = new Date(); setNowMin(n.getHours() * 60 + n.getMinutes()); }, 60000); return () => clearInterval(i); }, []);
@@ -578,10 +588,6 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
 
   const aplicar = useCallback((d, clientX, clientY) => {
     const min = yToMin(clientY);
-    if (d.modo === "crear") {
-      const a = Math.min(d.startMin, min), b = Math.max(d.startMin, min);
-      return { ...d, endMin: Math.max(b, a + SNAP_MIN), startMin: a };
-    }
     if (d.modo === "resize") return { ...d, endMin: Math.max(min, d.startMin + SNAP_MIN) };
     if (d.modo === "mover") {
       const dur = d.endMin - d.startMin;
@@ -592,11 +598,25 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
     return d;
   }, [yToMin, xToDia]);
 
-  const onDownVacio = (e, diaIdx) => {
-    if (e.target.dataset.bloque) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const m = yToMin(e.clientY);
-    setDrag({ modo: "crear", diaIdx, startMin: m, endMin: m + SNAP_MIN });
+  // arrastre de las manijas del rectángulo de "tarea nueva" (top = inicio, bottom = fin, mover = todo el bloque)
+  const aplicarDraft = useCallback((d, clientX, clientY) => {
+    const min = yToMin(clientY);
+    if (d.modo === "top") return { ...d, startMin: Math.min(min, d.endMin - SNAP_MIN) };
+    if (d.modo === "bottom") return { ...d, endMin: Math.max(min, d.startMin + SNAP_MIN) };
+    if (d.modo === "mover") {
+      const dur = d.endMin - d.startMin;
+      let ns = min - d.offsetMin;
+      ns = Math.max(HORA_INI * 60, Math.min(HORA_FIN * 60 - dur, snap(ns)));
+      return { ...d, startMin: ns, endMin: ns + dur, diaIdx: xToDia(clientX) };
+    }
+    return d;
+  }, [yToMin, xToDia]);
+
+  // tap sobre la grilla vacía: no captura el puntero, así el scroll nativo manda.
+  // si al soltar el dedo casi no se movió, se interpreta como tap y abre la tarea nueva.
+  const onColDown = (e, diaIdx) => {
+    if (drag || draftDrag || e.target.dataset.bloque) return;
+    tapRef.current = { diaIdx, x: e.clientX, y: e.clientY, startMin: yToMin(e.clientY), pointerId: e.pointerId, moved: false };
   };
   const onDownBloque = (e, t, modo) => {
     e.stopPropagation();
@@ -606,19 +626,50 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
     const diaIdx = dias.findIndex((d) => sameDay(d, t.start));
     setDrag({ modo, id: t.id, diaIdx, startMin: sMin, endMin: eMin, offsetMin: modo === "mover" ? yToMin(e.clientY) - sMin : 0 });
   };
-  const onMove = (e) => { if (drag) setDrag((d) => ({ ...aplicar(d, e.clientX, e.clientY), px: e.clientX, py: e.clientY })); };
+  // manijas del rectángulo de tarea nueva (mientras editar?._nuevo está activo)
+  const onDownHandle = (e, modo) => {
+    e.stopPropagation();
+    gridRef.current.setPointerCapture(e.pointerId);
+    const sMin = editar.start.getHours() * 60 + editar.start.getMinutes();
+    const eMin = editar.end.getHours() * 60 + editar.end.getMinutes();
+    const diaIdx = dias.findIndex((d) => sameDay(d, editar.start));
+    setDraftDrag({ modo, diaIdx, startMin: sMin, endMin: eMin, offsetMin: modo === "mover" ? yToMin(e.clientY) - sMin : 0 });
+  };
+  const onMove = (e) => {
+    if (drag) setDrag((d) => ({ ...aplicar(d, e.clientX, e.clientY), px: e.clientX, py: e.clientY }));
+    if (draftDrag) setDraftDrag((d) => ({ ...aplicarDraft(d, e.clientX, e.clientY), px: e.clientX, py: e.clientY }));
+    const tap = tapRef.current;
+    if (tap && !tap.moved) {
+      if (Math.abs(e.clientX - tap.x) > TAP_MOVE_PX || Math.abs(e.clientY - tap.y) > TAP_MOVE_PX) tap.moved = true;
+    }
+  };
   const onUp = () => {
-    if (!drag) return;
-    if (drag.modo === "programar") { setDrag(null); return; }
-    const base = dias[drag.diaIdx];
-    const mk = (min) => { const d = new Date(base); d.setHours(Math.floor(min / 60), min % 60, 0, 0); return d; };
-    if (drag.modo === "crear") {
-      setEditar({ id: uid(), titulo: "", calendarioId: calendarios[0]?.id || null, start: mk(drag.startMin), end: mk(drag.endMin), completada: false, _nuevo: true });
-    } else {
+    if (drag) {
+      if (drag.modo === "programar") { setDrag(null); tapRef.current = null; return; }
+      const base = dias[drag.diaIdx];
+      const mk = (min) => { const d = new Date(base); d.setHours(Math.floor(min / 60), min % 60, 0, 0); return d; };
       const orig = tareas.find((t) => t.id === drag.id);
       upsert({ ...orig, start: mk(drag.startMin), end: mk(drag.endMin) });
+      setDrag(null);
+      tapRef.current = null;
+      return;
     }
-    setDrag(null);
+    if (draftDrag) {
+      const base = dias[draftDrag.diaIdx];
+      const mk = (min) => { const d = new Date(base); d.setHours(Math.floor(min / 60), min % 60, 0, 0); return d; };
+      setEditar((ed) => (ed ? { ...ed, start: mk(draftDrag.startMin), end: mk(draftDrag.endMin) } : ed));
+      setDraftDrag(null);
+      tapRef.current = null;
+      return;
+    }
+    const tap = tapRef.current;
+    if (tap && !tap.moved) {
+      const base = dias[tap.diaIdx];
+      const mk = (min) => { const d = new Date(base); d.setHours(Math.floor(min / 60), min % 60, 0, 0); return d; };
+      const finMin = Math.min(tap.startMin + 60, HORA_FIN * 60 - 1);
+      setEditar({ id: uid(), titulo: "", calendarioId: calendarios[0]?.id || null, start: mk(tap.startMin), end: mk(finMin), completada: false, _nuevo: true });
+    }
+    tapRef.current = null;
   };
 
   // arrastrar desde la bandeja a la grilla
@@ -714,7 +765,7 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
             <div className="absolute inset-0 flex">
               {dias.map((d, i) => (
                 <div key={i} className="flex-1 border-l border-[#EDEFF2] relative"
-                  style={{ touchAction: "pan-y" }} onPointerDown={(e) => onDownVacio(e, i)} />
+                  style={{ touchAction: "pan-y" }} onPointerDown={(e) => onColDown(e, i)} />
               ))}
             </div>
             {dias.some((d) => sameDay(d, hoy)) && nowMin >= HORA_INI * 60 && nowMin <= HORA_FIN * 60 && (
@@ -746,13 +797,6 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
                 </div>
               );
             })}
-            {drag?.modo === "crear" && (
-              <div className="absolute rounded-lg pointer-events-none border-2 border-dashed flex items-center justify-center"
-                style={{ top: minToTop(drag.startMin), height: ((drag.endMin - drag.startMin) / 60) * PX_HORA,
-                  left: `calc(${drag.diaIdx * (100 / numDias)}% + 2px)`, width: `calc(${100 / numDias}% - 4px)`, borderColor: "#E8743B", background: "#E8743B22", zIndex: 25 }}>
-                <span className="text-[10px] font-semibold text-[#E8743B]">{minAHora(drag.startMin)}–{minAHora(drag.endMin)}</span>
-              </div>
-            )}
             {drag?.modo === "programar" && drag.sobreGrilla && (
               <div className="absolute rounded-lg pointer-events-none border-2 border-dashed flex items-center justify-center"
                 style={{ top: minToTop(drag.startMin), height: PX_HORA,
@@ -760,6 +804,30 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
                 <span className="text-[10px] font-semibold text-[#E8743B]">{minAHora(drag.startMin)}</span>
               </div>
             )}
+            {/* rectángulo de selección de la tarea nueva, con manijas arriba/abajo (estilo Google Calendar) */}
+            {editar?._nuevo && (() => {
+              const enVivo = !!draftDrag;
+              const diaIdx = enVivo ? draftDrag.diaIdx : dias.findIndex((d) => sameDay(d, editar.start));
+              if (diaIdx < 0) return null;
+              const sMin = enVivo ? draftDrag.startMin : editar.start.getHours() * 60 + editar.start.getMinutes();
+              const eMin = enVivo ? draftDrag.endMin : editar.end.getHours() * 60 + editar.end.getMinutes();
+              const colW = 100 / numDias;
+              const col = calendarios.find((c) => c.id === editar.calendarioId)?.color || "#2563EB";
+              return (
+                <div data-bloque="1" onPointerDown={(e) => onDownHandle(e, "mover")}
+                  className="absolute rounded-lg select-none"
+                  style={{ top: minToTop(sMin), height: Math.max(((eMin - sMin) / 60) * PX_HORA, 18),
+                    left: `calc(${diaIdx * colW}% + 2px)`, width: `calc(${colW}% - 4px)`,
+                    border: `2px solid ${col}`, background: col + "33", zIndex: 28, touchAction: "none" }}>
+                  <div data-bloque="1" onPointerDown={(e) => onDownHandle(e, "top")}
+                    className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white shadow"
+                    style={{ border: `2px solid ${col}`, touchAction: "none" }} />
+                  <div data-bloque="1" onPointerDown={(e) => onDownHandle(e, "bottom")}
+                    className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white shadow"
+                    style={{ border: `2px solid ${col}`, touchAction: "none" }} />
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -791,6 +859,12 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
           {minAHora(drag.startMin)}–{minAHora(drag.endMin)}
         </div>
       )}
+      {draftDrag && draftDrag.px != null && (
+        <div className="fixed pointer-events-none z-50 px-2 py-1 rounded-lg text-[12px] font-semibold shadow-lg"
+          style={{ left: draftDrag.px + 12, top: draftDrag.py - 30, background: "#1B2430", color: "white" }}>
+          {minAHora(draftDrag.startMin)}–{minAHora(draftDrag.endMin)}
+        </div>
+      )}
 
       {/* fantasma que sigue al dedo mientras se arrastra una chip */}
       {drag?.modo === "programar" && drag.px != null && (
@@ -807,8 +881,12 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
 
 function EditorTarea({ editar, setEditar, calendarios, proyectos, upsert, onDelete }) {
   const [t, setT] = useState(editar);
+  const [expandido, setExpandido] = useState(false); // arranca chico abajo, como Google Calendar; se expande recién al tocarlo
+  const [tecladoOk, setTecladoOk] = useState(false); // y el teclado recién se habilita cuando el usuario toca el campo a propósito
+  const tituloRef = useRef(null);
   const programada = !!t.start;
   const proyecto = proyectos?.find((p) => p.id === t.proyectoId);
+  const colorPeek = calendarios.find((c) => c.id === t.calendarioId)?.color || proyecto?.color || "#94A3B8";
   const setHora = (campo, valor) => {
     const [h, m] = valor.split(":").map(Number);
     const d = new Date(t[campo]); d.setHours(h, m, 0, 0); setT({ ...t, [campo]: d });
@@ -816,50 +894,78 @@ function EditorTarea({ editar, setEditar, calendarios, proyectos, upsert, onDele
   const guardar = () => { upsert(t); setEditar(null); };
   const eliminar = () => { onDelete?.(t.id); setEditar(null); };
   const valHora = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const habilitarTeclado = () => {
+    if (tecladoOk) return;
+    setTecladoOk(true);
+    requestAnimationFrame(() => tituloRef.current?.focus());
+  };
+  // si el usuario ajustó el horario arrastrando el rectángulo en la grilla, se refleja acá
+  useEffect(() => {
+    setT((prev) => (prev.start?.getTime() === editar.start?.getTime() && prev.end?.getTime() === editar.end?.getTime()
+      ? prev : { ...prev, start: editar.start, end: editar.end }));
+  }, [editar.start, editar.end]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center" onClick={() => setEditar(null)}>
-      <div className="absolute inset-0 bg-black/30" />
-      <div className="relative w-full max-w-md bg-white rounded-t-3xl p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">{editar._nuevo ? "Nueva tarea" : "Editar tarea"}</h2>
-          <button onClick={() => setEditar(null)}><X size={22} className="text-[#9AA1AC]" /></button>
-        </div>
-        <input autoFocus value={t.titulo} onChange={(e) => setT({ ...t, titulo: e.target.value })} placeholder="Título"
-          className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2.5 outline-none text-[16px]" />
-        {proyecto && (
-          <div className="flex items-center gap-1.5 mt-2 text-[12px]" style={{ color: proyecto.color }}>
-            <FolderKanban size={13} /> Paso de «{proyecto.nombre}» · se edita desde Proyectos
-          </div>
-        )}
-        {programada ? (
-          <div className="flex gap-3 mt-3">
-            <label className="flex-1 text-[12px] text-[#6B7280]">Desde
-              <input type="time" value={valHora(t.start)} onChange={(e) => setHora("start", e.target.value)} className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 mt-1 text-[15px]" /></label>
-            <label className="flex-1 text-[12px] text-[#6B7280]">Hasta
-              <input type="time" value={valHora(t.end)} onChange={(e) => setHora("end", e.target.value)} className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 mt-1 text-[15px]" /></label>
-          </div>
+    // pointer-events-none en el wrapper: mientras está "peek" la grilla de atrás sigue siendo arrastrable
+    <div className="fixed inset-0 z-40 flex items-end justify-center pointer-events-none">
+      {expandido && <div className="absolute inset-0 bg-black/30 pointer-events-auto" onClick={() => setEditar(null)} />}
+      <div className="relative w-full max-w-md bg-white rounded-t-3xl overflow-hidden transition-[max-height] duration-300 ease-out pointer-events-auto"
+        style={{ maxHeight: expandido ? 640 : 96 }} onClick={(e) => e.stopPropagation()}>
+        {!expandido ? (
+          // ---- estado "peek": solo lo esencial, se expande al tocarlo ----
+          <button onClick={() => setExpandido(true)} className="w-full px-5 pt-2.5 pb-4 flex flex-col items-center text-left active:bg-[#FAFAFB] transition">
+            <ChevronUp size={16} className="text-[#C4C9D1] mb-1.5" />
+            <div className="w-full flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: colorPeek }} />
+              <span className={"text-[16px] " + (t.titulo ? "text-[#1B2430]" : "text-[#9AA1AC]")}>{t.titulo || "(Sin título)"}</span>
+            </div>
+            {programada && <span className="text-[12px] text-[#9AA1AC] mt-1 pl-5 self-start">{fmtHora(t.start)}–{fmtHora(t.end)}</span>}
+          </button>
         ) : (
-          <p className="text-[12px] text-[#9AA1AC] mt-3">Sin horario · arrastrala a la grilla en Semana para programarla.</p>
+          // ---- estado expandido: formulario completo ----
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">{editar._nuevo ? "Nueva tarea" : "Editar tarea"}</h2>
+              <button onClick={() => setEditar(null)}><X size={22} className="text-[#9AA1AC]" /></button>
+            </div>
+            <input ref={tituloRef} value={t.titulo} onChange={(e) => setT({ ...t, titulo: e.target.value })}
+              onPointerDown={habilitarTeclado} inputMode={tecladoOk ? "text" : "none"} placeholder="(Sin título)"
+              className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2.5 outline-none text-[16px]" />
+            {proyecto && (
+              <div className="flex items-center gap-1.5 mt-2 text-[12px]" style={{ color: proyecto.color }}>
+                <FolderKanban size={13} /> Paso de «{proyecto.nombre}» · se edita desde Proyectos
+              </div>
+            )}
+            {programada ? (
+              <div className="flex gap-3 mt-3">
+                <label className="flex-1 text-[12px] text-[#6B7280]">Desde
+                  <input type="time" value={valHora(t.start)} onChange={(e) => setHora("start", e.target.value)} className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 mt-1 text-[15px]" /></label>
+                <label className="flex-1 text-[12px] text-[#6B7280]">Hasta
+                  <input type="time" value={valHora(t.end)} onChange={(e) => setHora("end", e.target.value)} className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 mt-1 text-[15px]" /></label>
+              </div>
+            ) : (
+              <p className="text-[12px] text-[#9AA1AC] mt-3">Sin horario · arrastrala a la grilla en Semana para programarla.</p>
+            )}
+            <p className="text-[12px] text-[#6B7280] mt-3 mb-1.5">Calendario</p>
+            <div className="flex gap-1.5 flex-wrap">
+              {calendarios.map((c) => (
+                <button key={c.id} onClick={() => setT({ ...t, calendarioId: c.id })}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium border"
+                  style={{ borderColor: t.calendarioId === c.id ? c.color : "#E6E8EC", background: t.calendarioId === c.id ? c.color + "1A" : "transparent", color: t.calendarioId === c.id ? c.color : "#6B7280" }}>
+                  <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />{c.nombre}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2.5 text-[15px] font-medium">Guardar</button>
+              {onDelete && !editar._nuevo && (
+                <button onClick={eliminar} className="px-4 flex items-center justify-center gap-1.5 border border-[#FECACA] text-[#DC2626] rounded-lg py-2.5 text-[15px] font-medium">
+                  <Trash2 size={17} /> Eliminar
+                </button>
+              )}
+            </div>
+          </div>
         )}
-        <p className="text-[12px] text-[#6B7280] mt-3 mb-1.5">Calendario</p>
-        <div className="flex gap-1.5 flex-wrap">
-          {calendarios.map((c) => (
-            <button key={c.id} onClick={() => setT({ ...t, calendarioId: c.id })}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium border"
-              style={{ borderColor: t.calendarioId === c.id ? c.color : "#E6E8EC", background: t.calendarioId === c.id ? c.color + "1A" : "transparent", color: t.calendarioId === c.id ? c.color : "#6B7280" }}>
-              <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />{c.nombre}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2 mt-5">
-          <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2.5 text-[15px] font-medium">Guardar</button>
-          {onDelete && !editar._nuevo && (
-            <button onClick={eliminar} className="px-4 flex items-center justify-center gap-1.5 border border-[#FECACA] text-[#DC2626] rounded-lg py-2.5 text-[15px] font-medium">
-              <Trash2 size={17} /> Eliminar
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -930,12 +1036,7 @@ function ListaProyectos({ proyectos, pasos, upsertProyecto, deleteProyecto, onAb
                 <div className="px-4 pb-4 pt-1 border-t border-[#E6E8EC] bg-[#FAFAFB]">
                   <input autoFocus value={nombre} onChange={(e) => setNombre(e.target.value)}
                     className="w-full bg-white rounded-lg px-3 py-2 outline-none text-[15px] border border-[#E6E8EC] mt-3" />
-                  <div className="flex gap-2 mt-3 flex-wrap">
-                    {PALETA.map((c) => (
-                      <button key={c} onClick={() => setColor(c)} className="w-7 h-7 rounded-full"
-                        style={{ background: c, outline: color === c ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
-                    ))}
-                  </div>
+                  <SelectorColor color={color} onChange={setColor} />
                   <div className="flex gap-2 mt-3">
                     <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2 text-[14px] font-medium">Guardar</button>
                     <button onClick={cerrar} className="px-4 bg-white border border-[#E6E8EC] rounded-lg py-2 text-[14px]">Cancelar</button>
@@ -950,12 +1051,7 @@ function ListaProyectos({ proyectos, pasos, upsertProyecto, deleteProyecto, onAb
           <div className="bg-white rounded-2xl border border-[#E6E8EC] p-4">
             <input autoFocus value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === "Enter" && guardar()}
               placeholder="Nombre del proyecto" className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 outline-none text-[15px]" />
-            <div className="flex gap-2 mt-3 flex-wrap">
-              {PALETA.map((c) => (
-                <button key={c} onClick={() => setColor(c)} className="w-7 h-7 rounded-full"
-                  style={{ background: c, outline: color === c ? "2px solid #1B2430" : "none", outlineOffset: 2 }} />
-              ))}
-            </div>
+            <SelectorColor color={color} onChange={setColor} />
             <div className="flex gap-2 mt-4">
               <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2 text-[15px] font-medium">Crear</button>
               <button onClick={cerrar} className="px-4 bg-white border border-[#E6E8EC] rounded-lg py-2 text-[15px]">Cancelar</button>
