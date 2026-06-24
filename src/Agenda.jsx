@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from "react";
-import { Inbox, CalendarDays, Sun, Plus, Trash2, Check, X, Pencil, ChevronLeft, ChevronRight, ChevronUp, Loader2, AlertCircle, LogOut, FolderKanban, GripVertical, CalendarPlus } from "lucide-react";
+import { Inbox, CalendarDays, Sun, Plus, Trash2, Check, X, Pencil, ChevronLeft, ChevronRight, ChevronUp, Loader2, AlertCircle, LogOut, FolderKanban, GripVertical, CalendarPlus, ListTodo } from "lucide-react";
 import { supabase } from "./supabase";
 
 // ---------- helpers de fecha (sin librerías) ----------
@@ -66,6 +66,7 @@ const rowToTarea = (r) => ({
   start: r.inicio ? new Date(r.inicio) : null,
   end: r.fin ? new Date(r.fin) : null,
   completada: r.completada,
+  orden: r.orden ?? 0,
 });
 const tareaToRow = (t) => ({
   titulo: t.titulo,
@@ -75,6 +76,7 @@ const tareaToRow = (t) => ({
   inicio: t.start ? new Date(t.start).toISOString() : null,
   fin: t.end ? new Date(t.end).toISOString() : null,
   completada: !!t.completada,
+  orden: t.orden ?? 0,
 });
 
 const rowToProyecto = (r) => ({ id: r.id, nombre: r.nombre, color: r.color });
@@ -96,7 +98,7 @@ function useAgenda() {
       try {
         const [c, t, p, s] = await Promise.all([
           supabase.from("calendarios").select("*").order("created_at"),
-          supabase.from("tareas").select("*").order("created_at"),
+          supabase.from("tareas").select("*").order("orden").order("created_at"),
           supabase.from("proyectos").select("*").order("created_at"),
           supabase.from("pasos").select("*").order("orden"),
         ]);
@@ -246,9 +248,18 @@ function useAgenda() {
     await supabase.from("pasos").update({ tarea_id: null }).eq("id", paso.id);
   }, []);
 
+  const reordenarTareas = useCallback(async (tareasOrdenadas) => {
+    const conOrden = tareasOrdenadas.map((t, i) => ({ ...t, orden: i }));
+    setTareas((prev) => {
+      const ids = new Set(conOrden.map((t) => t.id));
+      return [...prev.filter((t) => !ids.has(t.id)), ...conOrden];
+    });
+    await Promise.all(conOrden.map((t) => supabase.from("tareas").update({ orden: t.orden }).eq("id", t.id)));
+  }, []);
+
   return {
     calendarios, tareas, proyectos, pasos, loading, error, setError,
-    upsertTarea, deleteTarea, upsertCalendario, deleteCalendario,
+    upsertTarea, deleteTarea, reordenarTareas, upsertCalendario, deleteCalendario,
     upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso,
   };
 }
@@ -326,10 +337,10 @@ function Auth() {
 
 function AgendaApp({ onSignOut }) {
   const hoy = startOfDay(new Date());
-  const [vista, setVista] = useState("semana");
+  const [vista, setVista] = useState("bandeja");
   const {
     calendarios, tareas, proyectos, pasos, loading, error, setError,
-    upsertTarea, deleteTarea, upsertCalendario, deleteCalendario,
+    upsertTarea, deleteTarea, reordenarTareas, upsertCalendario, deleteCalendario,
     upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso,
   } = useAgenda();
 
@@ -354,8 +365,9 @@ function AgendaApp({ onSignOut }) {
           </div>
         ) : (
           <>
-            {vista === "bandeja" && <Bandeja {...{ tareas, calendarios, proyectos, upsertCalendario, deleteCalendario, colorDe, upsert: upsertTarea, borrar: deleteTarea }} />}
-            {vista === "hoy" && <Hoy {...{ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert: upsertTarea, borrar: deleteTarea }} />}
+            {vista === "bandeja" && <Bandeja {...{ tareas, calendarios, proyectos, upsertCalendario, deleteCalendario, colorDe, upsert: upsertTarea, borrar: deleteTarea, reordenar: reordenarTareas }} />}
+            {vista === "pendientes" && <Pendientes {...{ tareas, calendarios, proyectos, colorDe, hoy, upsert: upsertTarea, borrar: deleteTarea, reordenar: reordenarTareas }} />}
+            {vista === "hoy" && <Hoy {...{ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert: upsertTarea, borrar: deleteTarea, reordenar: reordenarTareas }} />}
             {vista === "semana" && <Semana {...{ tareas, calById, calendarios, proyectos, colorDe, upsert: upsertTarea, borrar: deleteTarea, hoy }} />}
             {vista === "proyectos" && (
               <Proyectos {...{ proyectos, pasos, upsertProyecto, deleteProyecto, crearPaso, actualizarPaso, eliminarPaso, reordenarPasos, agendarPaso, desagendarPaso, hoy }} />
@@ -369,7 +381,7 @@ function AgendaApp({ onSignOut }) {
 }
 
 function Header({ vista, onSignOut }) {
-  const titulos = { bandeja: "Bandeja de entrada", hoy: "Hoy", semana: "Semana", proyectos: "Proyectos" };
+  const titulos = { bandeja: "Bandeja de entrada", pendientes: "Pendientes", hoy: "Hoy", semana: "Semana", proyectos: "Proyectos" };
   return (
     <div className="px-4 pt-4 pb-3 bg-white border-b border-[#E6E8EC] flex items-end justify-between">
       <div>
@@ -388,6 +400,7 @@ function Header({ vista, onSignOut }) {
 function Tabs({ vista, setVista }) {
   const items = [
     { id: "bandeja", label: "Bandeja", icon: Inbox },
+    { id: "pendientes", label: "Pendientes", icon: ListTodo },
     { id: "hoy", label: "Hoy", icon: Sun },
     { id: "semana", label: "Semana", icon: CalendarDays },
     { id: "proyectos", label: "Proyectos", icon: FolderKanban },
@@ -400,8 +413,8 @@ function Tabs({ vista, setVista }) {
           <button key={id} onClick={() => setVista(id)}
             className="flex-1 flex flex-col items-center gap-1 py-2.5 transition-colors"
             style={{ color: on ? "#E8743B" : "#9AA1AC" }}>
-            <Icon size={22} strokeWidth={on ? 2.4 : 1.8} />
-            <span className="text-[11px] font-medium" style={{ color: on ? "#1B2430" : "#9AA1AC" }}>{label}</span>
+            <Icon size={20} strokeWidth={on ? 2.4 : 1.8} />
+            <span className="text-[10px] font-medium" style={{ color: on ? "#1B2430" : "#9AA1AC" }}>{label}</span>
           </button>
         );
       })}
@@ -409,23 +422,59 @@ function Tabs({ vista, setVista }) {
   );
 }
 
+// ============================ DRAG REORDER HOOK (para Bandeja, Pendientes, Hoy) ============================
+function useDragReorder(items, onReorder) {
+  const [dragId, setDragId] = useState(null);
+  const [local, setLocal] = useState(items);
+  const rowRefs = useRef({});
+
+  useEffect(() => { if (!dragId) setLocal(items); }, [items, dragId]);
+
+  const onDown = (e, id) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragId(id);
+  };
+  const onMove = (e) => {
+    if (!dragId) return;
+    const y = e.clientY;
+    const ids = local.map((x) => x.id);
+    let target = ids.indexOf(dragId);
+    for (let i = 0; i < ids.length; i++) {
+      const el = rowRefs.current[ids[i]];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (y >= r.top && y <= r.bottom) { target = i; break; }
+    }
+    const cur = ids.indexOf(dragId);
+    if (target !== cur && target >= 0) {
+      const next = [...local];
+      const [m] = next.splice(cur, 1);
+      next.splice(target, 0, m);
+      setLocal(next);
+    }
+  };
+  const onUp = () => { if (dragId) onReorder(local); setDragId(null); };
+
+  return { local, dragId, rowRefs, onDown, onMove, onUp };
+}
+
 // ============================ BANDEJA ============================
-function Bandeja({ tareas, calendarios, proyectos, upsertCalendario, deleteCalendario, colorDe, upsert, borrar }) {
+function Bandeja({ tareas, calendarios, proyectos, upsertCalendario, deleteCalendario, colorDe, upsert, borrar, reordenar }) {
   const [texto, setTexto] = useState("");
   const [calSel, setCalSel] = useState(calendarios[0]?.id || null);
   const [gestion, setGestion] = useState(false);
   const [editar, setEditar] = useState(null);
-  const inbox = tareas.filter((t) => !t.start);
+  const inbox = tareas.filter((t) => !t.start).sort((a, b) => a.orden - b.orden);
+  const { local, dragId, rowRefs, onDown, onMove, onUp } = useDragReorder(inbox, reordenar);
 
   const agregar = () => {
     if (!texto.trim()) return;
-    upsert({ id: uid(), titulo: texto.trim(), calendarioId: calSel, start: null, end: null, completada: false, _nuevo: true });
+    upsert({ id: uid(), titulo: texto.trim(), calendarioId: calSel, start: null, end: null, completada: false, orden: inbox.length, _nuevo: true });
     setTexto("");
   };
 
   return (
     <div className="h-full overflow-y-auto px-4 py-3">
-      {/* captura rápida */}
       <div className="bg-white rounded-2xl border border-[#E6E8EC] p-3 shadow-sm">
         <div className="flex items-center gap-2">
           <input value={texto} onChange={(e) => setTexto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && agregar()}
@@ -445,32 +494,34 @@ function Bandeja({ tareas, calendarios, proyectos, upsertCalendario, deleteCalen
         </div>
       </div>
 
-      {/* lista inbox */}
       <div className="mt-5 flex items-center justify-between">
-        <p className="text-[12px] uppercase tracking-[0.14em] text-[#9AA1AC]">Sin programar · {inbox.length}</p>
+        <p className="text-[12px] uppercase tracking-[0.14em] text-[#9AA1AC]">Sin programar · {local.length}</p>
         <button onClick={() => setGestion(true)} className="text-[12px] font-medium text-[#E8743B]">Editar calendarios</button>
       </div>
-      <div className="mt-2 space-y-2">
-        {inbox.length === 0 && <p className="text-[14px] text-[#9AA1AC] py-6 text-center">Bandeja vacía. Capturá lo que tengas en la cabeza.</p>}
-        {inbox.map((t) => (
-          <div key={t.id} className="group flex items-center gap-3 bg-white rounded-xl border border-[#E6E8EC] px-3 py-2.5">
-            <span className="w-1.5 h-7 rounded-full shrink-0" style={{ background: colorDe(t) }} />
-            <button onClick={() => setEditar({ ...t })} className="flex-1 text-left text-[15px]">{t.titulo}</button>
-            <button onClick={() => borrar(t.id)} className="text-[#C4C9D1] hover:text-[#DC2626] transition"><Trash2 size={16} /></button>
-          </div>
-        ))}
+      <div className="mt-2 space-y-2" onPointerMove={onMove} onPointerUp={onUp}>
+        {local.length === 0 && <p className="text-[14px] text-[#9AA1AC] py-6 text-center">Bandeja vacía.</p>}
+        {local.map((t) => {
+          const arr = dragId === t.id;
+          return (
+            <div key={t.id} ref={(el) => (rowRefs.current[t.id] = el)}
+              className="flex items-center gap-2 bg-white rounded-xl border border-[#E6E8EC] px-2 py-2.5 transition"
+              style={{ boxShadow: arr ? "0 6px 18px rgba(0,0,0,0.10)" : "none", opacity: arr ? 0.95 : 1 }}>
+              <button onPointerDown={(e) => onDown(e, t.id)} className="text-[#C4C9D1] touch-none px-0.5" style={{ touchAction: "none" }}>
+                <GripVertical size={18} />
+              </button>
+              <span className="w-1.5 h-6 rounded-full shrink-0" style={{ background: colorDe(t) }} />
+              <button onClick={() => setEditar({ ...t })} className="flex-1 text-left text-[15px]">{t.titulo}</button>
+              <button onClick={() => borrar(t.id)} className="text-[#C4C9D1] hover:text-[#DC2626] transition"><Trash2 size={16} /></button>
+            </div>
+          );
+        })}
       </div>
-      <p className="text-[12px] text-[#9AA1AC] mt-4 text-center leading-relaxed">
-        Para programar una tarea, arrastrala en la vista <b>Semana</b> (o creala directo ahí).
-      </p>
+      <p className="text-[12px] text-[#9AA1AC] mt-4 text-center">Revisá y programá desde <b>Pendientes</b>.</p>
 
       {gestion && (
-        <GestionCalendarios
-          calendarios={calendarios}
-          onSave={upsertCalendario}
+        <GestionCalendarios calendarios={calendarios} onSave={upsertCalendario}
           onDelete={(id) => { deleteCalendario(id); if (calSel === id) setCalSel(null); }}
-          onClose={() => setGestion(false)}
-        />
+          onClose={() => setGestion(false)} />
       )}
       {editar && <EditorTarea {...{ editar, setEditar, calendarios, proyectos, upsert, onDelete: borrar }} />}
     </div>
@@ -526,29 +577,162 @@ function GestionCalendarios({ calendarios, onSave, onDelete, onClose }) {
   );
 }
 
+// ============================ PENDIENTES ============================
+function Pendientes({ tareas, calendarios, proyectos, colorDe, hoy, upsert, borrar, reordenar }) {
+  const pendientes = tareas.filter((t) => !t.start && !t.completada).sort((a, b) => a.orden - b.orden);
+  const { local, dragId, rowRefs, onDown, onMove, onUp } = useDragReorder(pendientes, reordenar);
+  const [editar, setEditar] = useState(null);
+  const [agendarId, setAgendarId] = useState(null);
+
+  const mandarAHoy = (t) => {
+    const start = new Date(hoy); start.setHours(9, 0, 0, 0);
+    const end = new Date(hoy); end.setHours(10, 0, 0, 0);
+    upsert({ ...t, start, end });
+  };
+
+  return (
+    <div className="h-full overflow-y-auto px-4 py-3">
+      {local.length === 0 && (
+        <p className="text-[14px] text-[#9AA1AC] py-10 text-center">Todo al día. Las tareas sin fecha aparecen acá.</p>
+      )}
+      <div className="space-y-2" onPointerMove={onMove} onPointerUp={onUp}>
+        {local.map((t) => {
+          const arr = dragId === t.id;
+          const col = colorDe(t);
+          return (
+            <div key={t.id} ref={(el) => (rowRefs.current[t.id] = el)}
+              className="bg-white rounded-xl border border-[#E6E8EC] transition"
+              style={{ boxShadow: arr ? "0 6px 18px rgba(0,0,0,0.10)" : "none", opacity: arr ? 0.95 : 1 }}>
+              <div className="flex items-center gap-2 px-2 py-2.5">
+                <button onPointerDown={(e) => onDown(e, t.id)} className="text-[#C4C9D1] touch-none px-0.5" style={{ touchAction: "none" }}>
+                  <GripVertical size={18} />
+                </button>
+                <span className="w-1.5 h-7 rounded-full shrink-0" style={{ background: col }} />
+                <button onClick={() => setEditar({ ...t })} className="flex-1 text-left text-[15px]">{t.titulo}</button>
+                <button onClick={() => borrar(t.id)} className="text-[#C4C9D1] hover:text-[#DC2626] p-1"><Trash2 size={15} /></button>
+              </div>
+              {/* acciones rápidas */}
+              <div className="flex gap-2 px-3 pb-2.5 pt-0">
+                <button onClick={() => mandarAHoy(t)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E6E8EC] text-[#6B7280] hover:border-[#E8743B] hover:text-[#E8743B] transition">
+                  <Sun size={14} /> Hoy
+                </button>
+                <button onClick={() => setAgendarId(t.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-[#E6E8EC] text-[#6B7280] hover:border-[#2563EB] hover:text-[#2563EB] transition">
+                  <CalendarDays size={14} /> Agendar
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {agendarId && (() => {
+        const tarea = tareas.find((t) => t.id === agendarId);
+        if (!tarea) return null;
+        return (
+          <ModalAgendarTarea tarea={tarea} hoy={hoy}
+            onGuardar={(fecha, hora) => {
+              const [h, m] = hora.split(":").map(Number);
+              const start = new Date(fecha); start.setHours(h, m, 0, 0);
+              const end = new Date(start.getTime() + 60 * 60000);
+              upsert({ ...tarea, start, end });
+              setAgendarId(null);
+            }}
+            onClose={() => setAgendarId(null)} />
+        );
+      })()}
+
+      {editar && <EditorTarea {...{ editar, setEditar, calendarios, proyectos, upsert, onDelete: borrar }} />}
+    </div>
+  );
+}
+
+function ModalAgendarTarea({ tarea, hoy, onGuardar, onClose }) {
+  const DIA_CORTO_M = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+  const [fecha, setFecha] = useState(hoy);
+  const [hora, setHora] = useState("09:00");
+  const dias = Array.from({ length: 14 }, (_, i) => addDays(hoy, i));
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative w-full max-w-md bg-white rounded-t-3xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold">Agendar tarea</h2>
+          <button onClick={onClose}><X size={22} className="text-[#9AA1AC]" /></button>
+        </div>
+        <p className="text-[14px] text-[#6B7280] mb-4 truncate">{tarea.titulo}</p>
+        <p className="text-[12px] text-[#6B7280] mb-1.5">Día</p>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {dias.map((d, i) => {
+            const on = sameDay(d, fecha);
+            return (
+              <button key={i} onClick={() => setFecha(d)}
+                className="shrink-0 px-3 py-2 rounded-xl text-center border transition"
+                style={{ borderColor: on ? "#2563EB" : "#E6E8EC", background: on ? "#2563EB14" : "transparent" }}>
+                <span className="block text-[10px] uppercase text-[#9AA1AC]">{DIA_CORTO_M[d.getDay()]}</span>
+                <span className="block text-[15px] font-semibold" style={{ color: on ? "#2563EB" : "#1B2430" }}>{d.getDate()}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[12px] text-[#6B7280] mt-4 mb-1.5">Hora</p>
+        <input type="time" value={hora} onChange={(e) => setHora(e.target.value)}
+          className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2.5 outline-none text-[15px]" />
+        <button onClick={() => onGuardar(fecha, hora)}
+          className="mt-5 w-full bg-[#1B2430] text-white rounded-lg py-2.5 text-[15px] font-medium">Agendar</button>
+      </div>
+    </div>
+  );
+}
+
 // ============================ HOY ============================
-function Hoy({ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert, borrar }) {
+function Hoy({ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert, borrar, reordenar }) {
   const delDia = tareas.filter((t) => t.start && sameDay(t.start, hoy)).sort((a, b) => a.start - b.start);
   const [editar, setEditar] = useState(null);
   const toggle = (t) => upsert({ ...t, completada: !t.completada });
+
+  // al reordenar en Hoy, intercambia los rangos horarios para que el orden visual coincida con el horario
+  const reordenarConHoras = (nuevaLista) => {
+    const horasOriginales = delDia.map((t) => ({ start: t.start, end: t.end }));
+    const actualizadas = nuevaLista.map((t, i) => ({
+      ...t,
+      start: horasOriginales[i]?.start ?? t.start,
+      end: horasOriginales[i]?.end ?? t.end,
+      orden: i,
+    }));
+    actualizadas.forEach((t) => upsert(t));
+    reordenar(actualizadas);
+  };
+
+  const { local, dragId, rowRefs, onDown, onMove, onUp } = useDragReorder(delDia, reordenarConHoras);
+
   return (
     <div className="h-full overflow-y-auto px-4 py-3">
       <p className="text-[13px] text-[#6B7280] mb-3">{hoy.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}</p>
-      {delDia.length === 0 && <p className="text-[14px] text-[#9AA1AC] py-10 text-center">Nada programado para hoy.</p>}
-      <div className="space-y-2">
-        {delDia.map((t) => (
-          <div key={t.id} className="flex items-center gap-3 bg-white rounded-xl border border-[#E6E8EC] px-3 py-3">
-            <button onClick={() => toggle(t)} className="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition"
-              style={{ borderColor: colorDe(t), background: t.completada ? colorDe(t) : "transparent" }}>
-              {t.completada && <Check size={15} className="text-white" strokeWidth={3} />}
-            </button>
-            <button onClick={() => setEditar({ ...t })} className="flex-1 text-left">
-              <p className={"text-[15px] " + (t.completada ? "line-through text-[#9AA1AC]" : "")}>{t.titulo}</p>
-              <p className="text-[12px] text-[#9AA1AC]">{fmtHora(t.start)}–{fmtHora(t.end)} · {calById[t.calendarioId]?.nombre || "Sin calendario"}</p>
-            </button>
-            <span className="w-1.5 h-9 rounded-full" style={{ background: colorDe(t) }} />
-          </div>
-        ))}
+      {local.length === 0 && <p className="text-[14px] text-[#9AA1AC] py-10 text-center">Nada programado para hoy.</p>}
+      <div className="space-y-2" onPointerMove={onMove} onPointerUp={onUp}>
+        {local.map((t) => {
+          const arr = dragId === t.id;
+          return (
+            <div key={t.id} ref={(el) => (rowRefs.current[t.id] = el)}
+              className="flex items-center gap-2 bg-white rounded-xl border border-[#E6E8EC] px-2 py-3 transition"
+              style={{ boxShadow: arr ? "0 6px 18px rgba(0,0,0,0.10)" : "none", opacity: arr ? 0.95 : 1 }}>
+              <button onPointerDown={(e) => onDown(e, t.id)} className="text-[#C4C9D1] touch-none px-0.5" style={{ touchAction: "none" }}>
+                <GripVertical size={18} />
+              </button>
+              <button onClick={() => toggle(t)} className="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition"
+                style={{ borderColor: colorDe(t), background: t.completada ? colorDe(t) : "transparent" }}>
+                {t.completada && <Check size={15} className="text-white" strokeWidth={3} />}
+              </button>
+              <button onClick={() => setEditar({ ...t })} className="flex-1 text-left">
+                <p className={"text-[15px] " + (t.completada ? "line-through text-[#9AA1AC]" : "")}>{t.titulo}</p>
+                <p className="text-[12px] text-[#9AA1AC]">{fmtHora(t.start)}–{fmtHora(t.end)} · {calById[t.calendarioId]?.nombre || "Sin calendario"}</p>
+              </button>
+              <span className="w-1.5 h-9 rounded-full shrink-0" style={{ background: colorDe(t) }} />
+            </div>
+          );
+        })}
       </div>
       {editar && <EditorTarea {...{ editar, setEditar, calendarios, proyectos, upsert, onDelete: borrar }} />}
     </div>
