@@ -22,7 +22,21 @@ const SNAP_MIN = 15;
 const TAP_MOVE_PX = 18; // si el dedo se mueve más que esto, se prioriza el scroll y no se crea tarea
 const snap = (min) => Math.round(min / SNAP_MIN) * SNAP_MIN;
 
-const PALETA = ["#2563EB", "#059669", "#DB2777", "#D97706", "#7C3AED", "#0891B2", "#DC2626", "#65A30D"];
+const PALETA = ["#1A73E8", "#0F9D58", "#EA4335", "#F9AB00", "#8430CE", "#00ACC1", "#E91E63", "#7CB342"];
+
+// ---------- Material Design tokens ----------
+const M = {
+  blue:       "#1A73E8",  // Google blue (primary)
+  blueLight:  "#E8F0FE",  // blue surface
+  blueText:   "#1967D2",  // blue darker for text
+  red:        "#EA4335",  // ahora line / error
+  surface:    "#FFFFFF",
+  bg:         "#F8F9FA",
+  border:     "#DADCE0",
+  text1:      "#3C4043",
+  text2:      "#70757A",
+  text3:      "#BDC1C6",
+};
 
 // Selector de color reutilizable: paleta fija + rueda del sistema + hexadecimal manual
 function SelectorColor({ color, onChange }) {
@@ -349,8 +363,8 @@ function AgendaApp({ onSignOut }) {
   const colorDe = (t) => calById[t.calendarioId]?.color || proyById[t.proyectoId]?.color || "#94A3B8";
 
   return (
-    <div style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}
-      className="flex flex-col h-screen w-full bg-[#F4F5F7] text-[#1B2430] mx-auto max-w-md border-x border-[#E6E8EC]">
+    <div style={{ fontFamily: "'Roboto', ui-sans-serif, system-ui, sans-serif", background: M.bg }}
+      className="flex flex-col h-screen w-full text-[#3C4043] mx-auto max-w-md border-x border-[#DADCE0]">
       <Header vista={vista} onSignOut={onSignOut} />
       {error && (
         <div className="flex items-center gap-2 bg-[#FEF2F2] text-[#B91C1C] text-[13px] px-4 py-2 border-b border-[#FECACA]">
@@ -381,16 +395,16 @@ function AgendaApp({ onSignOut }) {
 }
 
 function Header({ vista, onSignOut }) {
-  const titulos = { bandeja: "Bandeja de entrada", pendientes: "Pendientes", hoy: "Hoy", semana: "Semana", proyectos: "Proyectos" };
+  const titulos = { bandeja: "Bandeja", pendientes: "Pendientes", hoy: "Hoy", semana: "Calendario", proyectos: "Proyectos" };
   return (
-    <div className="px-4 pt-4 pb-3 bg-white border-b border-[#E6E8EC] flex items-end justify-between">
+    <div className="px-4 pt-3 pb-3 flex items-center justify-between" style={{ background: M.surface, borderBottom: `1px solid ${M.border}` }}>
       <div>
-        <p className="text-[11px] uppercase tracking-[0.18em] text-[#9AA1AC]">Agenda</p>
-        <h1 className="text-2xl font-semibold tracking-tight">{titulos[vista]}</h1>
+        <p className="text-[11px] uppercase tracking-[0.14em] font-medium" style={{ color: M.text2 }}>Agenda</p>
+        <h1 className="text-[22px] font-normal tracking-tight" style={{ color: M.text1 }}>{titulos[vista]}</h1>
       </div>
       {onSignOut && (
-        <button onClick={onSignOut} className="text-[#9AA1AC] hover:text-[#1B2430] transition p-1.5" title="Salir">
-          <LogOut size={20} />
+        <button onClick={onSignOut} className="p-2 rounded-full transition hover:bg-[#F1F3F4]" title="Salir">
+          <LogOut size={20} style={{ color: M.text2 }} />
         </button>
       )}
     </div>
@@ -402,19 +416,21 @@ function Tabs({ vista, setVista }) {
     { id: "bandeja", label: "Bandeja", icon: Inbox },
     { id: "pendientes", label: "Pendientes", icon: ListTodo },
     { id: "hoy", label: "Hoy", icon: Sun },
-    { id: "semana", label: "Semana", icon: CalendarDays },
+    { id: "semana", label: "Calendario", icon: CalendarDays },
     { id: "proyectos", label: "Proyectos", icon: FolderKanban },
   ];
   return (
-    <nav className="flex bg-white border-t border-[#E6E8EC] pb-1">
+    <nav className="flex pb-1" style={{ background: M.surface, borderTop: `1px solid ${M.border}` }}>
       {items.map(({ id, label, icon: Icon }) => {
         const on = vista === id;
         return (
           <button key={id} onClick={() => setVista(id)}
-            className="flex-1 flex flex-col items-center gap-1 py-2.5 transition-colors"
-            style={{ color: on ? "#E8743B" : "#9AA1AC" }}>
-            <Icon size={20} strokeWidth={on ? 2.4 : 1.8} />
-            <span className="text-[10px] font-medium" style={{ color: on ? "#1B2430" : "#9AA1AC" }}>{label}</span>
+            className="flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors relative">
+            <div className="w-16 h-8 flex items-center justify-center rounded-full transition-all"
+              style={{ background: on ? M.blueLight : "transparent" }}>
+              <Icon size={20} strokeWidth={on ? 2.2 : 1.8} style={{ color: on ? M.blue : M.text2 }} />
+            </div>
+            <span className="text-[10px] font-medium" style={{ color: on ? M.blue : M.text2 }}>{label}</span>
           </button>
         );
       })}
@@ -741,7 +757,7 @@ function Hoy({ tareas, calById, calendarios, proyectos, colorDe, hoy, upsert, bo
 
 // ============================ SEMANA (grilla con drag) ============================
 function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borrar, hoy }) {
-  const [numDias, setNumDias] = useState(7);
+  const [numDias, setNumDias] = useState(1);
   const [ancla, setAncla] = useState(startOfWeek(new Date()));
   const dias = useMemo(() => Array.from({ length: numDias }, (_, i) => addDays(ancla, i)), [ancla, numDias]);
   const cambiarModo = (n) => { setNumDias(n); setAncla(n === 7 ? startOfWeek(new Date()) : startOfDay(new Date())); };
@@ -895,56 +911,68 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
 
   return (
     <div className="h-full flex flex-col">
-      {/* selector de vista + nav */}
-      <div className="bg-white border-b border-[#E6E8EC]">
+      {/* selector de vista + nav — Material style */}
+      <div style={{ background: M.surface, borderBottom: `1px solid ${M.border}` }}>
         <div className="flex gap-1 px-3 pt-2">
-          {[{ n: 1, l: "Hoy" }, { n: 3, l: "3 días" }, { n: 7, l: "Semana" }].map(({ n, l }) => {
+          {[{ n: 1, l: "Día" }, { n: 3, l: "3 días" }, { n: 7, l: "Semana" }].map(({ n, l }) => {
             const on = numDias === n;
             return (
               <button key={n} onClick={() => cambiarModo(n)}
-                className="flex-1 py-1.5 rounded-lg text-[13px] font-medium transition"
-                style={{ background: on ? "#1B2430" : "#F4F5F7", color: on ? "white" : "#6B7280" }}>{l}</button>
+                className="flex-1 py-1.5 rounded-full text-[13px] font-medium transition"
+                style={{ background: on ? M.blueLight : "transparent", color: on ? M.blue : M.text2 }}>{l}</button>
             );
           })}
         </div>
-        <div className="flex items-center justify-between px-4 py-2">
-          <button onClick={() => setAncla(addDays(ancla, -numDias))} className="p-1.5 text-[#6B7280]"><ChevronLeft size={20} /></button>
-          <p className="text-[14px] font-medium">
+        <div className="flex items-center justify-between px-3 py-1.5">
+          <button onClick={() => setAncla(addDays(ancla, -numDias))} className="p-2 rounded-full hover:bg-[#F1F3F4] transition">
+            <ChevronLeft size={20} style={{ color: M.text2 }} />
+          </button>
+          <p className="text-[14px] font-medium" style={{ color: M.text1 }}>
             {numDias === 1
               ? ancla.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })
               : `${ancla.getDate()} ${MESES[ancla.getMonth()].slice(0, 3)} – ${addDays(ancla, numDias - 1).getDate()} ${MESES[addDays(ancla, numDias - 1).getMonth()].slice(0, 3)}`}
           </p>
-          <button onClick={() => setAncla(addDays(ancla, numDias))} className="p-1.5 text-[#6B7280]"><ChevronRight size={20} /></button>
+          <button onClick={() => setAncla(addDays(ancla, numDias))} className="p-2 rounded-full hover:bg-[#F1F3F4] transition">
+            <ChevronRight size={20} style={{ color: M.text2 }} />
+          </button>
         </div>
       </div>
 
-      {/* encabezado días */}
-      <div className="flex bg-white border-b border-[#E6E8EC] pl-10">
+      {/* encabezado días — Material */}
+      <div className="flex pl-10" style={{ background: M.surface, borderBottom: `1px solid ${M.border}` }}>
         {dias.map((d, i) => {
           const esHoy = sameDay(d, hoy);
           return (
-            <div key={i} className="flex-1 text-center py-1.5">
-              <p className="text-[10px] uppercase text-[#9AA1AC]">{DIA_CORTO[d.getDay()]}</p>
-              <p className="text-[14px] font-semibold mx-auto w-7 h-7 leading-7 rounded-full"
-                style={{ background: esHoy ? "#E8743B" : "transparent", color: esHoy ? "white" : "#1B2430" }}>{d.getDate()}</p>
+            <div key={i} className="flex-1 text-center py-2">
+              <p className="text-[11px] uppercase font-medium" style={{ color: esHoy ? M.blue : M.text2 }}>{DIA_CORTO[d.getDay()]}</p>
+              <div className="mx-auto mt-0.5 w-8 h-8 flex items-center justify-center rounded-full"
+                style={{ background: esHoy ? M.blue : "transparent" }}>
+                <p className="text-[16px] font-medium" style={{ color: esHoy ? "white" : M.text1 }}>{d.getDate()}</p>
+              </div>
             </div>
           );
         })}
       </div>
 
       {/* grilla scrollable */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden" style={{ background: M.surface }}>
         <div className="flex" style={{ height: altoGrilla }}>
-          {/* columna horas */}
+          {/* columna horas — Material */}
           <div className="w-10 shrink-0 relative">
             {horas.map((h) => (
-              <div key={h} className="absolute right-1 -translate-y-1/2 text-[10px] text-[#B6BCC6]" style={{ top: minToTop(h * 60) }}>{h}:00</div>
+              h > 0 && <div key={h} className="absolute right-2 text-right -translate-y-1/2 text-[10px] font-medium select-none"
+                style={{ top: minToTop(h * 60), color: M.text3 }}>{h}</div>
             ))}
           </div>
           {/* área de columnas + drag */}
           <div ref={gridRef} className="flex-1 relative" style={{ touchAction: drag ? "none" : "auto" }} onPointerMove={onMove} onPointerUp={onUp}>
+            {/* líneas de hora principales */}
             {horas.map((h) => (
-              <div key={h} className="absolute left-0 right-0 border-t border-[#EDEFF2]" style={{ top: minToTop(h * 60) }} />
+              h > 0 && <div key={h} className="absolute left-0 right-0" style={{ top: minToTop(h * 60), borderTop: `1px solid ${M.border}` }} />
+            ))}
+            {/* líneas de media hora (más sutiles) */}
+            {horas.map((h) => (
+              <div key={`h${h}`} className="absolute left-0 right-0" style={{ top: minToTop(h * 60 + 30), borderTop: `1px dashed ${M.border}`, opacity: 0.5 }} />
             ))}
             <div className="absolute inset-0 flex">
               {dias.map((d, i) => (
@@ -953,8 +981,9 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
               ))}
             </div>
             {dias.some((d) => sameDay(d, hoy)) && nowMin >= HORA_INI * 60 && nowMin <= HORA_FIN * 60 && (
-              <div className="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: minToTop(nowMin) }}>
-                <div className="h-[2px] bg-[#EF4444]" />
+              <div className="absolute left-0 right-0 z-20 pointer-events-none flex items-center" style={{ top: minToTop(nowMin) }}>
+                <div className="w-2.5 h-2.5 rounded-full shrink-0 -ml-1.5" style={{ background: M.red }} />
+                <div className="flex-1 h-[2px]" style={{ background: M.red }} />
               </div>
             )}
             {progr.map((t) => {
@@ -968,27 +997,33 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
               const colW = 100 / numDias;
               const idx = arrastrando ? drag.diaIdx : di;
               const col = colorDe(t);
+              const alto = Math.max(h - 2, 20);
               return (
                 <div key={t.id} data-bloque="1" onPointerDown={(e) => onDownBloque(e, t, "mover")}
                   onClick={() => !drag && setEditar({ ...t })}
-                  className="absolute rounded-lg px-1.5 py-1 overflow-hidden shadow-sm select-none"
-                  style={{ top, height: Math.max(h - 2, 16), left: `calc(${idx * colW}% + 2px)`, width: `calc(${colW}% - 4px)`,
-                    background: col + "26", borderLeft: `3px solid ${col}`, touchAction: "none", zIndex: arrastrando ? 30 : 10, opacity: t.completada ? 0.55 : 1 }}>
-                  <p className="text-[11px] font-semibold leading-tight truncate" style={{ color: col }}>{t.titulo}</p>
-                  <p className="text-[10px] leading-tight" style={{ color: col }}>{arrastrando ? `${minAHora(drag.startMin)}–${minAHora(drag.endMin)}` : fmtHora(t.start)}</p>
+                  className="absolute overflow-hidden select-none"
+                  style={{ top, height: alto, left: `calc(${idx * colW}% + 2px)`, width: `calc(${colW}% - 4px)`,
+                    background: col, borderRadius: 4,
+                    boxShadow: arrastrando ? "0 4px 12px rgba(0,0,0,0.22)" : "0 1px 3px rgba(0,0,0,0.18)",
+                    touchAction: "none", zIndex: arrastrando ? 30 : 10, opacity: t.completada ? 0.6 : 1 }}>
+                  <div className="px-1.5 py-0.5">
+                    <p className="text-[11px] font-medium leading-tight truncate text-white">{t.titulo}</p>
+                    {alto > 30 && <p className="text-[10px] leading-tight text-white opacity-90">{arrastrando ? `${minAHora(drag.startMin)}–${minAHora(drag.endMin)}` : `${fmtHora(t.start)}–${fmtHora(t.end)}`}</p>}
+                  </div>
                   <div data-bloque="1" onPointerDown={(e) => onDownBloque(e, t, "resize")}
                     className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize" />
                 </div>
               );
             })}
             {drag?.modo === "programar" && drag.sobreGrilla && (
-              <div className="absolute rounded-lg pointer-events-none border-2 border-dashed flex items-center justify-center"
+              <div className="absolute pointer-events-none flex items-center justify-center"
                 style={{ top: minToTop(drag.startMin), height: PX_HORA,
-                  left: `calc(${drag.diaIdx * (100 / numDias)}% + 2px)`, width: `calc(${100 / numDias}% - 4px)`, borderColor: "#E8743B", background: "#E8743B22", zIndex: 25 }}>
-                <span className="text-[10px] font-semibold text-[#E8743B]">{minAHora(drag.startMin)}</span>
+                  left: `calc(${drag.diaIdx * (100 / numDias)}% + 2px)`, width: `calc(${100 / numDias}% - 4px)`,
+                  border: `2px dashed ${M.blue}`, background: M.blueLight, borderRadius: 4, zIndex: 25 }}>
+                <span className="text-[10px] font-medium" style={{ color: M.blue }}>{minAHora(drag.startMin)}</span>
               </div>
             )}
-            {/* rectángulo de selección de la tarea nueva, con manijas arriba/abajo (estilo Google Calendar) */}
+            {/* rectángulo de selección de la tarea nueva */}
             {editar?._nuevo && (() => {
               const enVivo = !!draftDrag;
               const diaIdx = enVivo ? draftDrag.diaIdx : dias.findIndex((d) => sameDay(d, editar.start));
@@ -996,18 +1031,18 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
               const sMin = enVivo ? draftDrag.startMin : editar.start.getHours() * 60 + editar.start.getMinutes();
               const eMin = enVivo ? draftDrag.endMin : editar.end.getHours() * 60 + editar.end.getMinutes();
               const colW = 100 / numDias;
-              const col = calendarios.find((c) => c.id === editar.calendarioId)?.color || "#2563EB";
+              const col = calendarios.find((c) => c.id === editar.calendarioId)?.color || M.blue;
               return (
                 <div data-bloque="1" onPointerDown={(e) => onDownHandle(e, "mover")}
-                  className="absolute rounded-lg select-none"
-                  style={{ top: minToTop(sMin), height: Math.max(((eMin - sMin) / 60) * PX_HORA, 18),
+                  className="absolute select-none"
+                  style={{ top: minToTop(sMin), height: Math.max(((eMin - sMin) / 60) * PX_HORA, 20),
                     left: `calc(${diaIdx * colW}% + 2px)`, width: `calc(${colW}% - 4px)`,
-                    border: `2px solid ${col}`, background: col + "33", zIndex: 28, touchAction: "none" }}>
+                    border: `2px solid ${col}`, background: col + "33", borderRadius: 4, zIndex: 28, touchAction: "none" }}>
                   <div data-bloque="1" onPointerDown={(e) => onDownHandle(e, "top")}
-                    className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white shadow"
+                    className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white shadow-md"
                     style={{ border: `2px solid ${col}`, touchAction: "none" }} />
                   <div data-bloque="1" onPointerDown={(e) => onDownHandle(e, "bottom")}
-                    className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white shadow"
+                    className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-white shadow-md"
                     style={{ border: `2px solid ${col}`, touchAction: "none" }} />
                 </div>
               );
@@ -1018,17 +1053,18 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
 
       {/* bandeja: tareas sin programar — arrastrá a la grilla */}
       {inbox.length > 0 && (
-        <div className="bg-white border-t border-[#E6E8EC] px-3 py-2">
-          <p className="text-[10px] uppercase tracking-[0.14em] text-[#9AA1AC] mb-1.5">Sin programar · arrastrá a la grilla</p>
+        <div className="px-3 py-2" style={{ background: M.surface, borderTop: `1px solid ${M.border}` }}>
+          <p className="text-[10px] uppercase tracking-[0.12em] font-medium mb-1.5" style={{ color: M.text2 }}>Sin programar · arrastrá</p>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {inbox.map((t) => {
               const col = colorDe(t);
               const tomada = drag?.modo === "programar" && drag.id === t.id;
               return (
                 <button key={t.id} onPointerDown={(e) => onChipDown(e, t)} onPointerMove={onChipMove} onPointerUp={onChipUp}
-                  className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[12px] font-medium select-none"
-                  style={{ borderColor: col, background: col + "14", color: col, touchAction: "none", opacity: tomada ? 0.4 : 1 }}>
-                  <span className="w-2 h-2 rounded-full" style={{ background: col }} />{t.titulo}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium select-none"
+                  style={{ borderRadius: 16, background: col, color: "white", touchAction: "none", opacity: tomada ? 0.4 : 1,
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.18)" }}>
+                  {t.titulo}
                 </button>
               );
             })}
@@ -1065,12 +1101,12 @@ function Semana({ tareas, calById, calendarios, proyectos, colorDe, upsert, borr
 
 function EditorTarea({ editar, setEditar, calendarios, proyectos, upsert, onDelete }) {
   const [t, setT] = useState(editar);
-  const [expandido, setExpandido] = useState(false); // arranca chico abajo, como Google Calendar; se expande recién al tocarlo
-  const [tecladoOk, setTecladoOk] = useState(false); // y el teclado recién se habilita cuando el usuario toca el campo a propósito
+  const [expandido, setExpandido] = useState(false);
+  const [tecladoOk, setTecladoOk] = useState(false);
   const tituloRef = useRef(null);
   const programada = !!t.start;
   const proyecto = proyectos?.find((p) => p.id === t.proyectoId);
-  const colorPeek = calendarios.find((c) => c.id === t.calendarioId)?.color || proyecto?.color || "#94A3B8";
+  const colorPeek = calendarios.find((c) => c.id === t.calendarioId)?.color || proyecto?.color || M.blue;
   const setHora = (campo, valor) => {
     const [h, m] = valor.split(":").map(Number);
     const d = new Date(t[campo]); d.setHours(h, m, 0, 0); setT({ ...t, [campo]: d });
@@ -1083,68 +1119,76 @@ function EditorTarea({ editar, setEditar, calendarios, proyectos, upsert, onDele
     setTecladoOk(true);
     requestAnimationFrame(() => tituloRef.current?.focus());
   };
-  // si el usuario ajustó el horario arrastrando el rectángulo en la grilla, se refleja acá
   useEffect(() => {
     setT((prev) => (prev.start?.getTime() === editar.start?.getTime() && prev.end?.getTime() === editar.end?.getTime()
       ? prev : { ...prev, start: editar.start, end: editar.end }));
   }, [editar.start, editar.end]);
 
   return (
-    // pointer-events-none en el wrapper: mientras está "peek" la grilla de atrás sigue siendo arrastrable
     <div className="fixed inset-0 z-40 flex items-end justify-center pointer-events-none">
-      {expandido && <div className="absolute inset-0 bg-black/30 pointer-events-auto" onClick={() => setEditar(null)} />}
-      <div className="relative w-full max-w-md bg-white rounded-t-3xl overflow-hidden transition-[max-height] duration-300 ease-out pointer-events-auto"
-        style={{ maxHeight: expandido ? 640 : 96 }} onClick={(e) => e.stopPropagation()}>
+      {expandido && <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setEditar(null)} />}
+      <div className="relative w-full max-w-md overflow-hidden pointer-events-auto transition-[max-height] duration-300 ease-out"
+        style={{ background: M.surface, borderRadius: "20px 20px 0 0", maxHeight: expandido ? 640 : 88,
+          boxShadow: "0 -1px 8px rgba(0,0,0,0.12)" }}
+        onClick={(e) => e.stopPropagation()}>
         {!expandido ? (
-          // ---- estado "peek": solo lo esencial, se expande al tocarlo ----
-          <button onClick={() => setExpandido(true)} className="w-full px-5 pt-2.5 pb-4 flex flex-col items-center text-left active:bg-[#FAFAFB] transition">
-            <ChevronUp size={16} className="text-[#C4C9D1] mb-1.5" />
-            <div className="w-full flex items-center gap-2.5">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: colorPeek }} />
-              <span className={"text-[16px] " + (t.titulo ? "text-[#1B2430]" : "text-[#9AA1AC]")}>{t.titulo || "(Sin título)"}</span>
+          <button onClick={() => setExpandido(true)} className="w-full px-5 pt-2 pb-4 flex flex-col items-center text-left" style={{ background: M.surface }}>
+            <div className="w-8 h-1 rounded-full mb-3" style={{ background: M.border }} />
+            <div className="w-full flex items-center gap-3">
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: colorPeek }} />
+              <span className="text-[16px] font-normal" style={{ color: t.titulo ? M.text1 : M.text2 }}>{t.titulo || "(Sin título)"}</span>
             </div>
-            {programada && <span className="text-[12px] text-[#9AA1AC] mt-1 pl-5 self-start">{fmtHora(t.start)}–{fmtHora(t.end)}</span>}
+            {programada && <span className="text-[12px] mt-0.5 pl-6 self-start" style={{ color: M.text2 }}>{fmtHora(t.start)} – {fmtHora(t.end)}</span>}
           </button>
         ) : (
-          // ---- estado expandido: formulario completo ----
-          <div className="p-5">
+          <div className="px-5 pt-3 pb-5">
+            <div className="w-8 h-1 rounded-full mx-auto mb-4" style={{ background: M.border }} />
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">{editar._nuevo ? "Nueva tarea" : "Editar tarea"}</h2>
-              <button onClick={() => setEditar(null)}><X size={22} className="text-[#9AA1AC]" /></button>
+              <h2 className="text-[18px] font-normal" style={{ color: M.text1 }}>{editar._nuevo ? "Nuevo evento" : "Editar evento"}</h2>
+              <button onClick={() => setEditar(null)} className="p-1.5 rounded-full hover:bg-[#F1F3F4]"><X size={20} style={{ color: M.text2 }} /></button>
             </div>
             <input ref={tituloRef} value={t.titulo} onChange={(e) => setT({ ...t, titulo: e.target.value })}
-              onPointerDown={habilitarTeclado} inputMode={tecladoOk ? "text" : "none"} placeholder="(Sin título)"
-              className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2.5 outline-none text-[16px]" />
+              onPointerDown={habilitarTeclado} inputMode={tecladoOk ? "text" : "none"} placeholder="Agregar título"
+              className="w-full outline-none text-[18px] font-normal pb-2"
+              style={{ borderBottom: `2px solid ${M.blue}`, color: M.text1, background: "transparent" }} />
             {proyecto && (
-              <div className="flex items-center gap-1.5 mt-2 text-[12px]" style={{ color: proyecto.color }}>
-                <FolderKanban size={13} /> Paso de «{proyecto.nombre}» · se edita desde Proyectos
+              <div className="flex items-center gap-1.5 mt-3 text-[12px]" style={{ color: proyecto.color }}>
+                <FolderKanban size={13} /> Paso de «{proyecto.nombre}»
               </div>
             )}
             {programada ? (
-              <div className="flex gap-3 mt-3">
-                <label className="flex-1 text-[12px] text-[#6B7280]">Desde
-                  <input type="time" value={valHora(t.start)} onChange={(e) => setHora("start", e.target.value)} className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 mt-1 text-[15px]" /></label>
-                <label className="flex-1 text-[12px] text-[#6B7280]">Hasta
-                  <input type="time" value={valHora(t.end)} onChange={(e) => setHora("end", e.target.value)} className="w-full bg-[#F4F5F7] rounded-lg px-3 py-2 mt-1 text-[15px]" /></label>
+              <div className="flex gap-3 mt-4">
+                <label className="flex-1 text-[11px] font-medium uppercase tracking-wide" style={{ color: M.text2 }}>Desde
+                  <input type="time" value={valHora(t.start)} onChange={(e) => setHora("start", e.target.value)}
+                    className="w-full outline-none text-[15px] font-normal mt-1 px-2 py-1.5 rounded"
+                    style={{ background: M.bg, color: M.text1 }} /></label>
+                <label className="flex-1 text-[11px] font-medium uppercase tracking-wide" style={{ color: M.text2 }}>Hasta
+                  <input type="time" value={valHora(t.end)} onChange={(e) => setHora("end", e.target.value)}
+                    className="w-full outline-none text-[15px] font-normal mt-1 px-2 py-1.5 rounded"
+                    style={{ background: M.bg, color: M.text1 }} /></label>
               </div>
             ) : (
-              <p className="text-[12px] text-[#9AA1AC] mt-3">Sin horario · arrastrala a la grilla en Semana para programarla.</p>
+              <p className="text-[13px] mt-3" style={{ color: M.text2 }}>Sin horario · arrastrá a la grilla para programar.</p>
             )}
-            <p className="text-[12px] text-[#6B7280] mt-3 mb-1.5">Calendario</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide mt-4 mb-2" style={{ color: M.text2 }}>Calendario</p>
             <div className="flex gap-1.5 flex-wrap">
               {calendarios.map((c) => (
                 <button key={c.id} onClick={() => setT({ ...t, calendarioId: c.id })}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium border"
-                  style={{ borderColor: t.calendarioId === c.id ? c.color : "#E6E8EC", background: t.calendarioId === c.id ? c.color + "1A" : "transparent", color: t.calendarioId === c.id ? c.color : "#6B7280" }}>
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium transition"
+                  style={{ borderRadius: 20, border: `1px solid ${t.calendarioId === c.id ? c.color : M.border}`,
+                    background: t.calendarioId === c.id ? c.color + "1A" : "transparent",
+                    color: t.calendarioId === c.id ? c.color : M.text2 }}>
                   <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />{c.nombre}
                 </button>
               ))}
             </div>
             <div className="flex gap-2 mt-5">
-              <button onClick={guardar} className="flex-1 bg-[#1B2430] text-white rounded-lg py-2.5 text-[15px] font-medium">Guardar</button>
+              <button onClick={guardar} className="flex-1 py-2.5 text-[15px] font-medium text-white rounded"
+                style={{ background: M.blue, borderRadius: 4 }}>Guardar</button>
               {onDelete && !editar._nuevo && (
-                <button onClick={eliminar} className="px-4 flex items-center justify-center gap-1.5 border border-[#FECACA] text-[#DC2626] rounded-lg py-2.5 text-[15px] font-medium">
-                  <Trash2 size={17} /> Eliminar
+                <button onClick={eliminar} className="px-4 flex items-center gap-1.5 text-[15px] font-medium rounded"
+                  style={{ border: `1px solid ${M.red}`, color: M.red, borderRadius: 4 }}>
+                  <Trash2 size={16} /> Eliminar
                 </button>
               )}
             </div>
